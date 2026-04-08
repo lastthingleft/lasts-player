@@ -1,4 +1,4 @@
-# Music Player
+# Last's Player
 
 A **dark-themed, lightweight music player** built with [Electron](https://www.electronjs.org/).  
 Play your favorite tracks directly on your computer with a sleek interface.
