@@ -23,4 +23,4 @@ Play your favorite tracks directly on your computer with a sleek interface.
 
 ```bash
 git clone https://github.com/lastthingleft/lasts-player
-cd music-player
+cd lasts-player
