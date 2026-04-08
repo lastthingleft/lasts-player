@@ -3,46 +3,28 @@
 
 /* ── Variables ──────────────────────────────────────────── */
 :root {
-  /* ── Brand ── */
   --accent:        #1446FF;
   --accent-hover:  #2F5BFF;
   --accent-active: #0F35CC;
-
-  /* ── Background Layers ── */
   --bg:   #191B1D;
   --bg2:  #1E2022;
   --bg3:  #232527;
-
-  /* ── Subtle Gradients (DEPTH ONLY) ── */
   --grad-main: linear-gradient(180deg, #1E2022 0%, #191B1D 100%);
   --grad-panel: linear-gradient(180deg, #232527 0%, #1E2022 100%);
   --grad-soft: linear-gradient(180deg, rgba(255,255,255,0.02), transparent);
-
-  /* ── Accent Gradient (ONLY interactive) ── */
   --grad-accent: linear-gradient(135deg, #1446FF, #2F5BFF);
-
-  /* ── UI Surfaces ── */
   --border: rgba(255,255,255,0.06);
   --hover:  rgba(255,255,255,0.05);
-
-  /* ── Text ── */
   --text:   #F8F8F8;
   --text2:  #B3B8BD;
   --text3:  #6B7278;
-
-  /* ── Feedback ── */
   --like: #F43F5E;
-
-  /* ── Radius ── */
   --radius: 14px;
   --radius-sm: 9px;
-
-  /* ── Easing ── */
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-/* ── Reset ───────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 html, body {
@@ -54,7 +36,6 @@ html, body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* ── Titlebar ────────────────────────────────────────────── */
 .titlebar {
   height: 40px;
   display: flex;
@@ -85,7 +66,6 @@ html, body {
 .wc-btn.minimize { background: linear-gradient(135deg, #FFBD2E, #E0A012); }
 .wc-btn.close    { background: linear-gradient(135deg, #FF6059, #E0443C); }
 
-/* ── App shell ───────────────────────────────────────────── */
 .app {
   display: grid;
   grid-template-columns: 280px 1fr;
@@ -93,9 +73,6 @@ html, body {
   overflow: hidden;
 }
 
-/* ═══════════════════════════════════════════════════════════
-   LEFT PANEL
-═══════════════════════════════════════════════════════════ */
 .left-panel {
   display: flex;
   flex-direction: column;
@@ -107,7 +84,6 @@ html, body {
 }
 .left-panel::-webkit-scrollbar { display: none; }
 
-/* ── Cover + Volume row ──────────────────────────────────── */
 .cover-volume-row {
   display: flex;
   flex-direction: row;
@@ -118,7 +94,6 @@ html, body {
   gap: 10px;
 }
 
-/* ── Cover art — rounded box ─────────────────────────────── */
 .cover-wrap {
   width: calc(280px - 44px - 10px - 28px);
   aspect-ratio: 1;
@@ -136,10 +111,7 @@ html, body {
   transition: transform 0.5s var(--ease-out), box-shadow 0.5s var(--ease-out);
   box-shadow: 0 8px 32px rgba(0,0,0,0.4);
 }
-.cover-art:hover {
-  transform: scale(1.02);
-  box-shadow: 0 12px 40px rgba(0,0,0,0.5);
-}
+.cover-art:hover { transform: scale(1.02); box-shadow: 0 12px 40px rgba(0,0,0,0.5); }
 .cover-art img {
   width: 100%; height: 100%; object-fit: cover; display: block;
   border-radius: 13px;
@@ -149,7 +121,6 @@ html, body {
 .cover-placeholder { color: var(--text3); }
 .cover-placeholder svg { width: 36px; height: 36px; }
 
-/* Cover swap animation — no gradient sweep, just clean fade+scale */
 .cover-art.switching img {
   animation: coverSwitch 0.45s var(--ease-out) forwards;
 }
@@ -158,7 +129,6 @@ html, body {
   100% { opacity: 1; transform: scale(1) translateY(0); }
 }
 
-/* ── Song info ───────────────────────────────────────────── */
 .song-info {
   padding: 14px 16px 6px;
   flex-shrink: 0;
@@ -183,7 +153,6 @@ html, body {
 }
 .song-meta .sep { color: var(--text3); }
 
-/* ── Spring-in animation (Roblox-style fluid drop) ─────── */
 @keyframes springDrop {
   0%   { opacity: 0; transform: translateY(14px) scale(0.97); }
   55%  { opacity: 1; transform: translateY(-3px) scale(1.01); }
@@ -201,7 +170,6 @@ html, body {
   animation: springDrop 0.55s var(--ease-spring) 0.10s both;
 }
 
-/* ── Progress ────────────────────────────────────────────── */
 .progress-section { padding: 4px 16px 8px; flex-shrink: 0; }
 .prog-track {
   height: 3px;
@@ -240,7 +208,6 @@ html, body {
   font-variant-numeric: tabular-nums;
 }
 
-/* ── Controls ────────────────────────────────────────────── */
 .controls-section { padding: 0 16px 8px; flex-shrink: 0; }
 .ctrl-row-top {
   display: flex;
@@ -275,11 +242,7 @@ html, body {
 .play-btn:active { transform: scale(0.95); }
 .play-btn svg { width: 16px; height: 16px; transition: transform 0.2s var(--ease-spring); }
 
-/* bottom action row */
-.ctrl-row-bottom {
-  display: flex;
-  gap: 6px;
-}
+.ctrl-row-bottom { display: flex; gap: 6px; }
 .ctrl-action-btn {
   flex: 1;
   display: flex; align-items: center; justify-content: center;
@@ -314,10 +277,15 @@ html, body {
   background: linear-gradient(135deg, #101E3A, #141830);
 }
 
-/* like pop */
-.ctrl-action-btn.pop { animation: likePop 0.4s var(--ease-spring) forwards; }
+/* FIX: like pop — reduced peak scale 1.45 → 1.18, less jarring */
+.ctrl-action-btn.pop { animation: likePopBtn 0.4s var(--ease-spring) forwards; }
+@keyframes likePopBtn {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(1.05); }
+  70%  { transform: scale(0.95); }
+  100% { transform: scale(1); }
+}
 
-/* shuffle */
 .left-bottom {
   padding: 0 16px 10px;
   display: flex;
@@ -351,7 +319,6 @@ html, body {
   background: linear-gradient(135deg, #101E3A, #141830);
 }
 
-/* ── Playlists section ───────────────────────────────────── */
 .playlists-section {
   padding: 0 10px 14px;
   flex: 1;
@@ -388,10 +355,7 @@ html, body {
   transition: background 0.2s, border-color 0.2s, transform 0.25s var(--ease-spring);
 }
 .pl-item:hover { background: rgba(255,255,255,0.05); border-color: var(--border); transform: translateX(2px); }
-.pl-item.active {
-  background: rgba(20,70,255,0.08);
-  border-color: rgba(74,158,255,0.15);
-}
+.pl-item.active { background: rgba(20,70,255,0.08); border-color: rgba(74,158,255,0.15); }
 
 .pl-thumb {
   width: 34px; height: 34px;
@@ -410,7 +374,6 @@ html, body {
 .pl-name { font-size: 12px; font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pl-count { font-size: 10px; color: var(--text3); margin-top: 1px; }
 
-/* context menu */
 .ctx-menu {
   position: fixed;
   z-index: 9999;
@@ -440,7 +403,6 @@ html, body {
 .ctx-item.danger { color: var(--like); }
 .ctx-item.danger:hover { background: rgba(255,91,127,0.08); }
 
-/* modal */
 .modal-backdrop {
   position: fixed; inset: 0;
   background: rgba(0,0,0,0.65);
@@ -512,16 +474,9 @@ html, body {
 }
 .modal-btn:hover { background: rgba(255,255,255,0.08); color: var(--text); transform: translateY(-1px); }
 .modal-btn:active { transform: scale(0.97); }
-.modal-btn.primary {
-  background: var(--grad-accent);
-  border-color: transparent; color: white;
-}
+.modal-btn.primary { background: var(--grad-accent); border-color: transparent; color: white; }
 .modal-btn.primary:hover { opacity: 0.88; }
 
-
-/* ═══════════════════════════════════════════════════════════
-   RIGHT PANEL
-═══════════════════════════════════════════════════════════ */
 .right-panel {
   display: flex;
   flex-direction: column;
@@ -529,7 +484,6 @@ html, body {
   overflow: hidden;
 }
 
-/* right header */
 .right-header {
   padding: 20px 28px 14px;
   display: flex;
@@ -572,15 +526,10 @@ html, body {
   white-space: nowrap;
   transition: background 0.2s, border-color 0.2s, transform 0.15s ease;
 }
-.add-folder-btn:hover {
-  background: rgba(20,70,255,0.18);
-  border-color: rgba(20,70,255,0.4);
-  transform: translateY(-1px);
-}
+.add-folder-btn:hover { background: rgba(20,70,255,0.18); border-color: rgba(20,70,255,0.4); transform: translateY(-1px); }
 .add-folder-btn:active { transform: scale(0.97); background: rgba(20,70,255,0.22); }
 .add-folder-btn svg { width: 13px; height: 13px; }
 
-/* track table header */
 .track-header {
   display: grid;
   grid-template-columns: 52px 1fr 160px 56px 40px;
@@ -594,7 +543,6 @@ html, body {
   flex-shrink: 0;
 }
 
-/* track list */
 .track-list {
   flex: 1;
   min-height: 0;
@@ -609,7 +557,6 @@ html, body {
 .track-list::-webkit-scrollbar-thumb { background: #2a2d30; border-radius: 2px; }
 .track-list::-webkit-scrollbar-thumb:hover { background: #363a3e; }
 
-/* ── Track rows ──────────────────────────────────────────── */
 .track-row {
   display: grid;
   grid-template-columns: 52px 1fr 160px 56px 40px;
@@ -621,7 +568,6 @@ html, body {
   border-radius: var(--radius-sm);
   animation: rowFadeIn 0.3s var(--ease-out) both;
 }
-
 .track-row:nth-child(1)  { animation-delay: 0.00s; }
 .track-row:nth-child(2)  { animation-delay: 0.03s; }
 .track-row:nth-child(3)  { animation-delay: 0.06s; }
@@ -650,10 +596,7 @@ html, body {
   z-index: 0;
 }
 .track-row:hover::before { opacity: 1; }
-.track-row.playing::before {
-  opacity: 1;
-  background: rgba(20,70,255,0.10);
-}
+.track-row.playing::before { opacity: 1; background: rgba(20,70,255,0.10); }
 
 .track-row > * { position: relative; z-index: 1; }
 .track-row > .t-num  { padding-left: 4px; }
@@ -661,7 +604,6 @@ html, body {
 .track-row > .t-album { padding-left: 4px; }
 .track-row > .t-dur { padding-right: 8px; }
 
-/* ── Track number cell — with overlay for play/pause ─────── */
 .t-num {
   display: flex; align-items: center; justify-content: center;
   font-size: 11.5px; color: var(--text3);
@@ -673,18 +615,13 @@ html, body {
   border-radius: 8px;
   overflow: hidden;
   flex-shrink: 0;
-  /* center within its grid cell */
   margin: auto;
 }
-
-/* Default state: show number/bars */
 .num-default {
   display: flex; align-items: center; justify-content: center;
   width: 100%; height: 100%;
   transition: opacity 0.18s;
 }
-
-/* On hover: show darkened art + play/pause icon */
 .t-mini-art-overlay {
   position: absolute;
   inset: 0;
@@ -711,28 +648,13 @@ html, body {
   transition: transform 0.2s var(--ease-spring);
 }
 .overlay-icon svg { width: 14px; height: 14px; }
-
-/* The t-num in a track-row with a mini-art cover — show the cover inside overlay */
-.track-row .t-num .t-mini-art-overlay {
-  /* We only actually show art if the row has a cover; otherwise just show darkened bg */
-  background: rgba(30,32,34,0.9);
-}
-
-/* On row hover: reveal overlay, hide default num */
+.track-row .t-num .t-mini-art-overlay { background: rgba(30,32,34,0.9); }
 .track-row:hover .t-num .num-default { opacity: 0; }
-.track-row:hover .t-num .t-mini-art-overlay {
-  opacity: 1;
-  pointer-events: auto;
-}
+.track-row:hover .t-num .t-mini-art-overlay { opacity: 1; pointer-events: auto; }
 .track-row:hover .t-num .overlay-icon { transform: scale(1); }
-
-/* Active number label */
 .active-num { color: var(--accent); font-size: 10px; }
 
-.t-info {
-  display: flex; align-items: center; gap: 10px;
-  min-width: 0;
-}
+.t-info { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .t-mini-art {
   width: 38px; height: 38px;
   border-radius: 8px;
@@ -744,14 +666,8 @@ html, body {
   border: 0.5px solid rgba(255,255,255,0.07);
   transition: transform 0.3s var(--ease-spring), box-shadow 0.3s;
 }
-.track-row:hover .t-mini-art {
-  transform: scale(1.06);
-  box-shadow: 0 4px 12px rgba(0,0,0,0.35);
-}
-.track-row.playing .t-mini-art {
-  border-color: rgba(74,158,255,0.3);
-  box-shadow: 0 0 0 1.5px rgba(74,158,255,0.2);
-}
+.track-row:hover .t-mini-art { transform: scale(1.06); box-shadow: 0 4px 12px rgba(0,0,0,0.35); }
+.track-row.playing .t-mini-art { border-color: rgba(74,158,255,0.3); box-shadow: 0 0 0 1.5px rgba(74,158,255,0.2); }
 .t-mini-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .t-mini-art svg { width: 14px; height: 14px; }
 
@@ -765,7 +681,6 @@ html, body {
   font-size: 11px; color: var(--text2); margin-top: 1px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-
 .t-album { font-size: 11.5px; color: var(--text3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .t-dur { font-size: 11.5px; color: var(--text2); font-variant-numeric: tabular-nums; text-align: right; }
 
@@ -784,15 +699,15 @@ html, body {
 .t-like.liked:hover { transform: scale(1.15); }
 .t-like svg { width: 12px; height: 12px; }
 
+/* FIX: reduced peak scale 1.45 → 1.18 */
 .t-like.pop { animation: likePop 0.4s var(--ease-spring) forwards; }
 @keyframes likePop {
   0%   { transform: scale(1); }
-  40%  { transform: scale(1.45); }
-  70%  { transform: scale(0.9); }
+  40%  { transform: scale(1.18); }
+  70%  { transform: scale(0.95); }
   100% { transform: scale(1); }
 }
 
-/* ── Playing bars (4 bars, Spotify-style) ────────────────── */
 .playing-bars {
   display: flex;
   align-items: flex-end;
@@ -818,7 +733,6 @@ html, body {
   100% { transform: scaleY(0.18); }
 }
 
-/* empty state */
 .empty-state {
   display: flex; flex-direction: column; align-items: center;
   justify-content: center; gap: 12px;
@@ -828,7 +742,6 @@ html, body {
 .empty-state svg { width: 32px; height: 32px; }
 .empty-state p { font-size: 12.5px; }
 
-/* ── Volume column ───────────────────────────────────────── */
 .vol-col {
   display: flex; flex-direction: column; align-items: center;
   gap: 6px;
