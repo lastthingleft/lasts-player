@@ -5,6 +5,7 @@ const mm = require('music-metadata')
 // ── Constants ─────────────────────────────────────────────
 const LIKED_PLAYLIST = '❤️ Liked Songs'
 const DATA_PATH = path.join(require('@electron/remote').app.getPath('userData'), 'playlists.json')
+const SESSION_PATH = path.join(require('@electron/remote').app.getPath('userData'), 'session.json')
 
 // ── State ─────────────────────────────────────────────────
 let playlists = {}
@@ -35,6 +36,35 @@ document.addEventListener('mousemove', e => {
   if (isDraggingVol) setVol(e)
 })
 
+// ── Session persistence ───────────────────────────────────
+function saveSession() {
+  try {
+    const seek = (currentSound && currentSound.playing()) ? currentSound.seek() : 0
+    const session = {
+      currentPlaylist,
+      currentTrackIndex,
+      volume,
+      seek: seek || 0
+    }
+    fs.writeFileSync(SESSION_PATH, JSON.stringify(session, null, 2), 'utf8')
+  } catch (e) { console.error('Session save failed:', e) }
+}
+
+function loadSession() {
+  try {
+    if (!fs.existsSync(SESSION_PATH)) return null
+    return JSON.parse(fs.readFileSync(SESSION_PATH, 'utf8'))
+  } catch (e) { return null }
+}
+
+// Save session on close
+window.addEventListener('beforeunload', () => {
+  saveSession()
+})
+
+// Also save periodically
+setInterval(saveSession, 5000)
+
 // ── Persistence ───────────────────────────────────────────
 function savePlaylists() {
   try {
@@ -42,7 +72,8 @@ function savePlaylists() {
     for (const [name, tracks] of Object.entries(playlists)) {
       serialisable[name] = tracks.map(t => ({
         title: t.title, artist: t.artist, album: t.album,
-        genre: t.genre, duration: t.duration, path: t.path
+        genre: t.genre, duration: t.duration, path: t.path,
+        replayGain: t.replayGain
       }))
     }
     fs.writeFileSync(DATA_PATH, JSON.stringify({ playlists: serialisable, likedSongs: [...likedSongs], playlistCovers }, null, 2), 'utf8')
@@ -69,7 +100,44 @@ async function loadPlaylists() {
       }))
     }
     renderPlaylists()
-    if (Object.keys(playlists).length > 0) loadPlaylist(Object.keys(playlists)[0])
+
+    // Restore session
+    const session = loadSession()
+    if (session && session.currentPlaylist && playlists[session.currentPlaylist]) {
+      loadPlaylist(session.currentPlaylist)
+      // Restore volume
+      if (typeof session.volume === 'number') {
+        volume = session.volume
+        document.getElementById('volFill').style.height = (volume * 100) + '%'
+        Howler.volume(volume)
+      }
+      // Restore track (load but don't auto-play, restore seek position)
+      const tracks = playlists[session.currentPlaylist]
+      const idx = session.currentTrackIndex
+      if (tracks && idx >= 0 && idx < tracks.length) {
+        currentTrackIndex = idx
+        const track = tracks[idx]
+        // Update UI to show last track without playing
+        updateNowPlayingUI(track)
+        renderTracks()
+        // Prime a sound for seeking without auto-play
+        if (currentSound) { currentSound.stop(); currentSound.unload() }
+        currentSound = new Howl({
+          src: [track.path], html5: true, volume,
+          onload() {
+            if (session.seek && session.seek > 0) {
+              currentSound.seek(session.seek)
+              const pct = session.seek / currentSound.duration()
+              document.getElementById('progressFill').style.width = (pct * 100).toFixed(2) + '%'
+              document.getElementById('currentTime').textContent = fmt(session.seek)
+            }
+          }
+        })
+        currentSound.load()
+      }
+    } else if (Object.keys(playlists).length > 0) {
+      loadPlaylist(Object.keys(playlists)[0])
+    }
   } catch (e) { console.error('Load failed:', e) }
 }
 
@@ -99,15 +167,43 @@ function randomColor(str) {
   return colors[h]
 }
 
+// ── Volume normalization (ReplayGain) ─────────────────────
+// Target RMS loudness in dBFS — tracks louder than this get attenuated
+const TARGET_LUFS = -18
+function getTrackVolume(track) {
+  // If track has stored replayGain info use it
+  if (typeof track.replayGain === 'number') {
+    const gain = track.replayGain // in dB
+    const linear = Math.pow(10, gain / 20)
+    return Math.min(1.0, Math.max(0.05, linear))
+  }
+  return 1.0
+}
+
+async function analyzeTrackLoudness(filePath) {
+  // We use music-metadata replaygain tags when available
+  try {
+    const meta = await mm.parseFile(filePath, { duration: true, skipCovers: true })
+    // Try ReplayGain track gain tag
+    const rg = meta.common?.replaygain_track_gain
+    if (rg && typeof rg.dB === 'number') {
+      return rg.dB
+    }
+    // Fallback: use a default slight reduction for safety (0 dB = no change)
+    return 0
+  } catch (e) {
+    return 0
+  }
+}
+
 // ── Song-switch animation ─────────────────────────────────
 function animateSongSwitch(track) {
   // Cover art: sweep + re-enter
   const coverEl = document.getElementById('coverArt')
   coverEl.classList.remove('switching', 'sweep')
-  void coverEl.offsetWidth // reflow
+  void coverEl.offsetWidth
   coverEl.classList.add('sweep')
 
-  // Swap cover content
   setTimeout(() => {
     coverEl.innerHTML = track.coverUrl
       ? `<img src="${track.coverUrl}" alt="cover">`
@@ -116,16 +212,25 @@ function animateSongSwitch(track) {
     setTimeout(() => coverEl.classList.remove('switching'), 500)
   }, 140)
 
-  // Song info: slide up
+  // Song info: spring drop-in animation (Roblox-style fluid)
   const songInfo = document.querySelector('.song-info')
-  songInfo.classList.remove('animating')
+  songInfo.classList.remove('spring-in')
   void songInfo.offsetWidth
+
   document.getElementById('songName').textContent = track.title || 'Unknown'
   document.getElementById('artistName').textContent = track.artist || 'Unknown Artist'
   document.getElementById('genreName').textContent = track.genre || track.album || '—'
   document.getElementById('totalTime').textContent = fmt(track.duration || 0)
-  songInfo.classList.add('animating')
-  setTimeout(() => songInfo.classList.remove('animating'), 500)
+
+  songInfo.classList.add('spring-in')
+  setTimeout(() => songInfo.classList.remove('spring-in'), 700)
+
+  // Progress bar spring reset
+  const progressSection = document.querySelector('.progress-section')
+  progressSection.classList.remove('spring-in')
+  void progressSection.offsetWidth
+  progressSection.classList.add('spring-in')
+  setTimeout(() => progressSection.classList.remove('spring-in'), 700)
 
   updateLikeBtn()
 }
@@ -164,8 +269,13 @@ function playSong(index) {
   if (currentSound) { currentSound.stop(); currentSound.unload(); clearInterval(progressInterval) }
   currentTrackIndex = index
   const track = tracks[index]
+
+  // Calculate normalized volume for this track
+  const trackVol = getTrackVolume(track)
+  const effectiveVol = Math.min(1.0, volume * trackVol)
+
   currentSound = new Howl({
-    src: [track.path], html5: true, volume,
+    src: [track.path], html5: true, volume: effectiveVol,
     onload() {
       if (!track.duration) {
         track.duration = currentSound.duration()
@@ -175,8 +285,9 @@ function playSong(index) {
     onplay() {
       isPlaying = true; updatePlayBtn(); animateSongSwitch(track); renderTracks()
       clearInterval(progressInterval); progressInterval = setInterval(updateProgress, 300)
+      saveSession()
     },
-    onpause() { isPlaying = false; updatePlayBtn(); renderTracks(); clearInterval(progressInterval) },
+    onpause() { isPlaying = false; updatePlayBtn(); renderTracks(); clearInterval(progressInterval); saveSession() },
     onstop() { isPlaying = false; clearInterval(progressInterval) },
     onend() { clearInterval(progressInterval); repeatMode === 'one' ? playSong(currentTrackIndex) : nextSong() },
     onloaderror(id, err) { console.error('Load error:', err); nextSong() }
@@ -222,7 +333,6 @@ function updatePlayBtn() {
   } else {
     icon.innerHTML = '<polygon points="5 3 19 12 5 21 5 3"/>'
   }
-  // Pulse the play button
   const btn = document.getElementById('playBtn')
   btn.style.transform = 'scale(0.9)'
   setTimeout(() => { btn.style.transform = '' }, 150)
@@ -272,7 +382,6 @@ function likeSong() {
   if (!currentPlaylist || currentTrackIndex < 0) return
   _toggleLikePath(playlists[currentPlaylist][currentTrackIndex].path)
   updateLikeBtn()
-  // Animate the main like button
   const btn = document.getElementById('likeBtn')
   btn.classList.add('pop')
   setTimeout(() => btn.classList.remove('pop'), 400)
@@ -287,11 +396,65 @@ function _toggleLikePath(trackPath) {
 function updateLikeBtn() {
   if (!currentPlaylist || currentTrackIndex < 0) return
   const track = playlists[currentPlaylist][currentTrackIndex]
+  if (!track) return
   const liked = likedSongs.has(track.path)
   const btn = document.getElementById('likeBtn'), icon = document.getElementById('likeIcon')
   btn.classList.toggle('liked', liked)
   icon.setAttribute('fill', liked ? 'var(--like)' : 'none')
 }
+
+// ── Keyboard shortcuts ────────────────────────────────────
+document.addEventListener('keydown', e => {
+  // Don't intercept when typing in inputs
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
+
+  switch (e.code) {
+    case 'Space':
+      e.preventDefault()
+      togglePlay()
+      break
+    case 'MediaPlayPause':
+      e.preventDefault()
+      togglePlay()
+      break
+    case 'MediaNextTrack':
+      e.preventDefault()
+      nextSong()
+      break
+    case 'MediaPreviousTrack':
+      e.preventDefault()
+      prevSong()
+      break
+    case 'MediaStop':
+      e.preventDefault()
+      stopPlayback()
+      break
+    case 'ArrowRight':
+      if (e.altKey || e.metaKey) { e.preventDefault(); nextSong() }
+      break
+    case 'ArrowLeft':
+      if (e.altKey || e.metaKey) { e.preventDefault(); prevSong() }
+      break
+    case 'ArrowUp':
+      if (e.altKey || e.metaKey) {
+        e.preventDefault()
+        volume = Math.min(1, volume + 0.05)
+        document.getElementById('volFill').style.height = (volume * 100).toFixed(1) + '%'
+        Howler.volume(volume)
+        if (currentSound) currentSound.volume(Math.min(1, volume * getTrackVolume(playlists[currentPlaylist]?.[currentTrackIndex] || {})))
+      }
+      break
+    case 'ArrowDown':
+      if (e.altKey || e.metaKey) {
+        e.preventDefault()
+        volume = Math.max(0, volume - 0.05)
+        document.getElementById('volFill').style.height = (volume * 100).toFixed(1) + '%'
+        Howler.volume(volume)
+        if (currentSound) currentSound.volume(Math.min(1, volume * getTrackVolume(playlists[currentPlaylist]?.[currentTrackIndex] || {})))
+      }
+      break
+  }
+})
 
 // ── Folder import ─────────────────────────────────────────
 async function addFolder() {
@@ -306,7 +469,7 @@ async function addFolder() {
   const tracks = []
   for (const file of files) {
     const filePath = path.join(folderPath, file)
-    const track = { title: path.basename(file, path.extname(file)), artist: 'Unknown Artist', album: 'Unknown Album', genre: '', duration: 0, coverUrl: null, path: filePath }
+    const track = { title: path.basename(file, path.extname(file)), artist: 'Unknown Artist', album: 'Unknown Album', genre: '', duration: 0, coverUrl: null, path: filePath, replayGain: 0 }
     try {
       const meta = await mm.parseFile(filePath, { duration: true, skipCovers: false })
       const tags = meta.common
@@ -317,6 +480,10 @@ async function addFolder() {
       if (meta.format.duration) track.duration = meta.format.duration
       const pic = tags.picture?.[0]
       if (pic) { const blob = new Blob([pic.data], { type: pic.format }); track.coverUrl = URL.createObjectURL(blob) }
+      // Store ReplayGain if available
+      if (tags.replaygain_track_gain?.dB) {
+        track.replayGain = tags.replaygain_track_gain.dB
+      }
     } catch (e) { console.warn(`Skipped metadata for ${file}:`, e.message) }
     tracks.push(track)
   }
@@ -378,22 +545,32 @@ function renderTracks() {
     div.className = 'track-row' + (isActive ? ' playing' : '')
     div.ondblclick = () => playSong(i)
 
-    const playIconSvg = isActive && isPlaying
-      ? `<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="6" y="4" width="4" height="16" rx="1.5"/><rect x="14" y="4" width="4" height="16" rx="1.5"/></svg>`
-      : `<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg>`
-
     const artCell = track.coverUrl
       ? `<img src="${track.coverUrl}" alt="">`
       : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>`
 
-    const numCell = isActive && isPlaying
-      ? `<div class="playing-bars"><span></span><span></span><span></span></div>`
-      : `<span class="track-num-label">${i + 1}</span>`
+    // For active+playing: show animated bars; for active+paused: show pause icon; else show number
+    let numCell
+    if (isActive && isPlaying) {
+      numCell = `<div class="playing-bars"><span></span><span></span><span></span><span></span></div>`
+    } else if (isActive && !isPlaying) {
+      numCell = `<span class="track-num-label active-num">▶</span>`
+    } else {
+      numCell = `<span class="track-num-label">${i + 1}</span>`
+    }
 
     div.innerHTML = `
       <div class="t-num">
-        ${numCell}
-        <div class="track-play-icon" style="display:none">${playIconSvg}</div>
+        <div class="num-default">${numCell}</div>
+        <div class="t-mini-art-overlay">
+          <div class="overlay-darken"></div>
+          <div class="overlay-icon">
+            ${isActive && isPlaying
+              ? `<svg viewBox="0 0 24 24" fill="white" stroke="none"><rect x="6" y="4" width="4" height="16" rx="1.5"/><rect x="14" y="4" width="4" height="16" rx="1.5"/></svg>`
+              : `<svg viewBox="0 0 24 24" fill="white" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg>`
+            }
+          </div>
+        </div>
       </div>
       <div class="t-info">
         <div class="t-mini-art">${artCell}</div>
@@ -411,32 +588,12 @@ function renderTracks() {
       </div>
     `
 
-    // Hover: show play icon, hide number
-    div.addEventListener('mouseenter', () => {
-      const numLabel = div.querySelector('.track-num-label')
-      const playIcon = div.querySelector('.track-play-icon')
-      const bars = div.querySelector('.playing-bars')
-      if (numLabel) numLabel.style.display = 'none'
-      if (bars) bars.style.display = 'none'
-      if (playIcon) playIcon.style.display = 'flex'
+    // Click on the num/overlay area to play/pause
+    const numArea = div.querySelector('.t-num')
+    numArea.addEventListener('click', e => {
+      e.stopPropagation()
+      isActive ? togglePlay() : playSong(i)
     })
-    div.addEventListener('mouseleave', () => {
-      const numLabel = div.querySelector('.track-num-label')
-      const playIcon = div.querySelector('.track-play-icon')
-      const bars = div.querySelector('.playing-bars')
-      if (numLabel) numLabel.style.display = 'block'
-      if (bars && isActive && isPlaying) bars.style.display = 'flex'
-      if (playIcon) playIcon.style.display = 'none'
-    })
-
-    // Play icon click
-    const playIconEl = div.querySelector('.track-play-icon')
-    if (playIconEl) {
-      playIconEl.addEventListener('click', e => {
-        e.stopPropagation()
-        isActive ? togglePlay() : playSong(i)
-      })
-    }
 
     // Like button
     const likeEl = div.querySelector('.t-like')
@@ -566,14 +723,22 @@ function setVol(e) {
   volume = pct
   document.getElementById('volFill').style.height = (pct * 100).toFixed(1) + '%'
   Howler.volume(pct)
-  if (currentSound) currentSound.volume(pct)
+  if (currentSound) {
+    const track = playlists[currentPlaylist]?.[currentTrackIndex]
+    const trackVol = track ? getTrackVolume(track) : 1
+    currentSound.volume(Math.min(1, pct * trackVol))
+  }
+  saveSession()
 }
 document.getElementById('volFill').style.height = (volume * 100) + '%'
 
 // ── Window controls ───────────────────────────────────────
 function minimizeWindow() { require('@electron/remote').getCurrentWindow().minimize() }
 function maximizeWindow() { const w = require('@electron/remote').getCurrentWindow(); w.isMaximized() ? w.unmaximize() : w.maximize() }
-function closeWindow() { require('@electron/remote').getCurrentWindow().close() }
+function closeWindow() {
+  saveSession()
+  require('@electron/remote').getCurrentWindow().close()
+}
 
 // ── Init ──────────────────────────────────────────────────
 loadPlaylists()
