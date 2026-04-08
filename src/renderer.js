@@ -111,16 +111,19 @@ async function loadPlaylists() {
         document.getElementById('volFill').style.height = (volume * 100) + '%'
         Howler.volume(volume)
       }
-      // Restore track (load but don't auto-play, restore seek position)
+      // Restore track — load but don't auto-play, restore seek position
       const tracks = playlists[session.currentPlaylist]
       const idx = session.currentTrackIndex
       if (tracks && idx >= 0 && idx < tracks.length) {
         currentTrackIndex = idx
         const track = tracks[idx]
-        // Update UI to show last track without playing
+        // Update UI to show last track in paused state
         updateNowPlayingUI(track)
         renderTracks()
-        // Prime a sound for seeking without auto-play
+        // Ensure play button shows the paused icon
+        isPlaying = false
+        updatePlayBtn()
+
         if (currentSound) { currentSound.stop(); currentSound.unload() }
         currentSound = new Howl({
           src: [track.path], html5: true, volume,
@@ -131,7 +134,25 @@ async function loadPlaylists() {
               document.getElementById('progressFill').style.width = (pct * 100).toFixed(2) + '%'
               document.getElementById('currentTime').textContent = fmt(session.seek)
             }
-          }
+          },
+          onplay() {
+            isPlaying = true
+            updatePlayBtn()
+            updateTrackRowState()   // ← lightweight, no re-render
+            clearInterval(progressInterval)
+            progressInterval = setInterval(updateProgress, 300)
+            saveSession()
+          },
+          onpause() {
+            isPlaying = false
+            updatePlayBtn()
+            updateTrackRowState()   // ← lightweight, no re-render
+            clearInterval(progressInterval)
+            saveSession()
+          },
+          onstop() { isPlaying = false; updatePlayBtn(); clearInterval(progressInterval) },
+          onend() { clearInterval(progressInterval); repeatMode === 'one' ? playSong(currentTrackIndex) : nextSong() },
+          onloaderror(id, err) { console.error('Load error:', err); nextSong() }
         })
         currentSound.load()
       }
@@ -168,12 +189,10 @@ function randomColor(str) {
 }
 
 // ── Volume normalization (ReplayGain) ─────────────────────
-// Target RMS loudness in dBFS — tracks louder than this get attenuated
 const TARGET_LUFS = -18
 function getTrackVolume(track) {
-  // If track has stored replayGain info use it
   if (typeof track.replayGain === 'number') {
-    const gain = track.replayGain // in dB
+    const gain = track.replayGain
     const linear = Math.pow(10, gain / 20)
     return Math.min(1.0, Math.max(0.05, linear))
   }
@@ -181,22 +200,16 @@ function getTrackVolume(track) {
 }
 
 async function analyzeTrackLoudness(filePath) {
-  // We use music-metadata replaygain tags when available
   try {
     const meta = await mm.parseFile(filePath, { duration: true, skipCovers: true })
-    // Try ReplayGain track gain tag
     const rg = meta.common?.replaygain_track_gain
-    if (rg && typeof rg.dB === 'number') {
-      return rg.dB
-    }
-    // Fallback: use a default slight reduction for safety (0 dB = no change)
+    if (rg && typeof rg.dB === 'number') return rg.dB
     return 0
-  } catch (e) {
-    return 0
-  }
+  } catch (e) { return 0 }
 }
 
 // ── Song-switch animation ─────────────────────────────────
+// Called only from playSong (song change), never from onplay/onpause
 function animateSongSwitch(track) {
   // Cover art: sweep + re-enter
   const coverEl = document.getElementById('coverArt')
@@ -212,7 +225,7 @@ function animateSongSwitch(track) {
     setTimeout(() => coverEl.classList.remove('switching'), 500)
   }, 140)
 
-  // Song info: spring drop-in animation (Roblox-style fluid)
+  // Song info: spring drop-in animation
   const songInfo = document.querySelector('.song-info')
   songInfo.classList.remove('spring-in')
   void songInfo.offsetWidth
@@ -233,6 +246,43 @@ function animateSongSwitch(track) {
   setTimeout(() => progressSection.classList.remove('spring-in'), 700)
 
   updateLikeBtn()
+}
+
+// ── Lightweight track-row state update ────────────────────
+// Updates only the num cell and playing class of the active row,
+// without re-rendering the list (which would replay rowFadeIn animations).
+function updateTrackRowState() {
+  const rows = document.querySelectorAll('.track-row')
+  rows.forEach((row, i) => {
+    const isActive = i === currentTrackIndex
+    row.classList.toggle('playing', isActive && isPlaying)
+
+    const numDefault = row.querySelector('.num-default')
+    const overlayIcon = row.querySelector('.overlay-icon')
+    if (!numDefault) return
+
+    if (isActive && isPlaying) {
+      numDefault.innerHTML = `<div class="playing-bars"><span></span><span></span><span></span><span></span></div>`
+      if (overlayIcon) overlayIcon.innerHTML = `<svg viewBox="0 0 24 24" fill="white" stroke="none"><rect x="6" y="4" width="4" height="16" rx="1.5"/><rect x="14" y="4" width="4" height="16" rx="1.5"/></svg>`
+    } else if (isActive && !isPlaying) {
+      numDefault.innerHTML = `<span class="track-num-label active-num">▶</span>`
+      if (overlayIcon) overlayIcon.innerHTML = `<svg viewBox="0 0 24 24" fill="white" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg>`
+    } else {
+      numDefault.innerHTML = `<span class="track-num-label">${i + 1}</span>`
+      if (overlayIcon) overlayIcon.innerHTML = `<svg viewBox="0 0 24 24" fill="white" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg>`
+    }
+
+    // Keep title colour in sync
+    const titleEl = row.querySelector('.t-title')
+    if (titleEl) titleEl.style.color = (isActive && isPlaying) ? 'var(--accent)' : ''
+
+    // Mini-art border
+    const miniArt = row.querySelector('.t-mini-art')
+    if (miniArt) {
+      miniArt.style.borderColor = isActive ? 'rgba(74,158,255,0.3)' : ''
+      miniArt.style.boxShadow = isActive ? '0 0 0 1.5px rgba(74,158,255,0.2)' : ''
+    }
+  })
 }
 
 // ── Liked Songs ───────────────────────────────────────────
@@ -270,7 +320,11 @@ function playSong(index) {
   currentTrackIndex = index
   const track = tracks[index]
 
-  // Calculate normalized volume for this track
+  // Animate song info/cover only on song change
+  animateSongSwitch(track)
+  // Full re-render only on song change (moves the active row highlight)
+  renderTracks()
+
   const trackVol = getTrackVolume(track)
   const effectiveVol = Math.min(1.0, volume * trackVol)
 
@@ -282,18 +336,27 @@ function playSong(index) {
         document.getElementById('totalTime').textContent = fmt(track.duration)
       }
     },
+    // onplay/onpause only update state indicators — no list re-render
     onplay() {
-      isPlaying = true; updatePlayBtn(); animateSongSwitch(track); renderTracks()
-      clearInterval(progressInterval); progressInterval = setInterval(updateProgress, 300)
+      isPlaying = true
+      updatePlayBtn()
+      updateTrackRowState()
+      clearInterval(progressInterval)
+      progressInterval = setInterval(updateProgress, 300)
       saveSession()
     },
-    onpause() { isPlaying = false; updatePlayBtn(); renderTracks(); clearInterval(progressInterval); saveSession() },
-    onstop() { isPlaying = false; clearInterval(progressInterval) },
+    onpause() {
+      isPlaying = false
+      updatePlayBtn()
+      updateTrackRowState()
+      clearInterval(progressInterval)
+      saveSession()
+    },
+    onstop() { isPlaying = false; updatePlayBtn(); clearInterval(progressInterval) },
     onend() { clearInterval(progressInterval); repeatMode === 'one' ? playSong(currentTrackIndex) : nextSong() },
     onloaderror(id, err) { console.error('Load error:', err); nextSong() }
   })
   currentSound.play()
-  document.getElementById('totalTime').textContent = fmt(track.duration || 0)
   document.getElementById('progressFill').style.width = '0%'
   document.getElementById('currentTime').textContent = '0:00'
 }
@@ -323,7 +386,11 @@ function togglePlay() {
     if (currentPlaylist && playlists[currentPlaylist]?.length > 0) playSong(currentTrackIndex >= 0 ? currentTrackIndex : 0)
     return
   }
-  currentSound.playing() ? currentSound.pause() : currentSound.play()
+  if (currentSound.playing()) {
+    currentSound.pause()
+  } else {
+    currentSound.play()
+  }
 }
 
 function updatePlayBtn() {
@@ -405,7 +472,6 @@ function updateLikeBtn() {
 
 // ── Keyboard shortcuts ────────────────────────────────────
 document.addEventListener('keydown', e => {
-  // Don't intercept when typing in inputs
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
 
   switch (e.code) {
@@ -480,7 +546,6 @@ async function addFolder() {
       if (meta.format.duration) track.duration = meta.format.duration
       const pic = tags.picture?.[0]
       if (pic) { const blob = new Blob([pic.data], { type: pic.format }); track.coverUrl = URL.createObjectURL(blob) }
-      // Store ReplayGain if available
       if (tags.replaygain_track_gain?.dB) {
         track.replayGain = tags.replaygain_track_gain.dB
       }
@@ -549,7 +614,6 @@ function renderTracks() {
       ? `<img src="${track.coverUrl}" alt="">`
       : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>`
 
-    // For active+playing: show animated bars; for active+paused: show pause icon; else show number
     let numCell
     if (isActive && isPlaying) {
       numCell = `<div class="playing-bars"><span></span><span></span><span></span><span></span></div>`
@@ -588,14 +652,12 @@ function renderTracks() {
       </div>
     `
 
-    // Click on the num/overlay area to play/pause
     const numArea = div.querySelector('.t-num')
     numArea.addEventListener('click', e => {
       e.stopPropagation()
       isActive ? togglePlay() : playSong(i)
     })
 
-    // Like button
     const likeEl = div.querySelector('.t-like')
     likeEl.addEventListener('click', e => {
       e.stopPropagation()
