@@ -22,6 +22,10 @@ let progressInterval = null
 let isDraggingProgress = false
 let isDraggingVol = false
 
+// ── Search State ──────────────────────────────────────────
+let filterQuery = ''
+let filterOverall = false
+
 // ── Mouse tracking ────────────────────────────────────────
 document.addEventListener('mousemove', e => {
   const els = document.querySelectorAll(
@@ -57,12 +61,7 @@ function loadSession() {
   } catch (e) { return null }
 }
 
-// Save session on close
-window.addEventListener('beforeunload', () => {
-  saveSession()
-})
-
-// Also save periodically
+window.addEventListener('beforeunload', () => { saveSession() })
 setInterval(saveSession, 5000)
 
 // ── Persistence ───────────────────────────────────────────
@@ -101,26 +100,21 @@ async function loadPlaylists() {
     }
     renderPlaylists()
 
-    // Restore session
     const session = loadSession()
     if (session && session.currentPlaylist && playlists[session.currentPlaylist]) {
       loadPlaylist(session.currentPlaylist)
-      // Restore volume
       if (typeof session.volume === 'number') {
         volume = session.volume
         document.getElementById('volFill').style.height = (volume * 100) + '%'
         Howler.volume(volume)
       }
-      // Restore track — load but don't auto-play, restore seek position
       const tracks = playlists[session.currentPlaylist]
       const idx = session.currentTrackIndex
       if (tracks && idx >= 0 && idx < tracks.length) {
         currentTrackIndex = idx
         const track = tracks[idx]
-        // Update UI to show last track in paused state
         updateNowPlayingUI(track)
         renderTracks()
-        // Ensure play button shows the paused icon
         isPlaying = false
         updatePlayBtn()
 
@@ -138,7 +132,7 @@ async function loadPlaylists() {
           onplay() {
             isPlaying = true
             updatePlayBtn()
-            updateTrackRowState()   // ← lightweight, no re-render
+            updateTrackRowState()
             clearInterval(progressInterval)
             progressInterval = setInterval(updateProgress, 300)
             saveSession()
@@ -146,7 +140,7 @@ async function loadPlaylists() {
           onpause() {
             isPlaying = false
             updatePlayBtn()
-            updateTrackRowState()   // ← lightweight, no re-render
+            updateTrackRowState()
             clearInterval(progressInterval)
             saveSession()
           },
@@ -189,7 +183,6 @@ function randomColor(str) {
 }
 
 // ── Volume normalization (ReplayGain) ─────────────────────
-const TARGET_LUFS = -18
 function getTrackVolume(track) {
   if (typeof track.replayGain === 'number') {
     const gain = track.replayGain
@@ -208,10 +201,87 @@ async function analyzeTrackLoudness(filePath) {
   } catch (e) { return 0 }
 }
 
+// ── Search helpers ────────────────────────────────────────
+// Escapes a string for safe insertion into HTML
+function escHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+// Returns HTML with matching parts wrapped in <mark class="sh">
+function highlight(text, query) {
+  if (!query) return escHtml(text)
+  const escaped = escHtml(text)
+  const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return escaped.replace(new RegExp(`(${escapedQuery})`, 'gi'), '<mark class="sh">$1</mark>')
+}
+
+// Checks whether a track matches the current filterQuery
+function trackMatchesQuery(track, query) {
+  if (!query) return true
+  const q = query.toLowerCase()
+  return (
+    (track.title  || '').toLowerCase().includes(q) ||
+    (track.artist || '').toLowerCase().includes(q) ||
+    (track.album  || '').toLowerCase().includes(q) ||
+    (track.genre  || '').toLowerCase().includes(q)
+  )
+}
+
+// Returns the list of { track, playlistName, originalIndex } to render
+function getFilteredTracks() {
+  const q = filterQuery.trim()
+
+  if (filterOverall && q) {
+    // Search across every playlist (skip duplicates by file path)
+    const seen = new Set()
+    const results = []
+    for (const [name, tracks] of Object.entries(playlists)) {
+      for (let i = 0; i < tracks.length; i++) {
+        const t = tracks[i]
+        if (!seen.has(t.path) && trackMatchesQuery(t, q)) {
+          seen.add(t.path)
+          results.push({ track: t, playlistName: name, originalIndex: i })
+        }
+      }
+    }
+    return results
+  }
+
+  if (!currentPlaylist || !playlists[currentPlaylist]) return []
+
+  return playlists[currentPlaylist]
+    .map((track, i) => ({ track, playlistName: currentPlaylist, originalIndex: i }))
+    .filter(({ track }) => trackMatchesQuery(track, q))
+}
+
+// ── Search UI handlers ────────────────────────────────────
+function onSearchInput(e) {
+  filterQuery = e.target.value
+  const wrap = document.getElementById('searchInputWrap')
+  wrap.classList.toggle('has-query', filterQuery.length > 0)
+  renderTracks()
+}
+
+function clearSearch() {
+  filterQuery = ''
+  document.getElementById('searchInput').value = ''
+  document.getElementById('searchInputWrap').classList.remove('has-query')
+  renderTracks()
+}
+
+function onOverallToggle() {
+  filterOverall = document.getElementById('overallToggle').checked
+  const label = document.getElementById('overallToggleLabel')
+  label.classList.toggle('active', filterOverall)
+  renderTracks()
+}
+
 // ── Song-switch animation ─────────────────────────────────
-// Called only from playSong (song change), never from onplay/onpause
 function animateSongSwitch(track) {
-  // Cover art: sweep + re-enter
   const coverEl = document.getElementById('coverArt')
   coverEl.classList.remove('switching', 'sweep')
   void coverEl.offsetWidth
@@ -225,7 +295,6 @@ function animateSongSwitch(track) {
     setTimeout(() => coverEl.classList.remove('switching'), 500)
   }, 140)
 
-  // Song info: spring drop-in animation
   const songInfo = document.querySelector('.song-info')
   songInfo.classList.remove('spring-in')
   void songInfo.offsetWidth
@@ -238,7 +307,6 @@ function animateSongSwitch(track) {
   songInfo.classList.add('spring-in')
   setTimeout(() => songInfo.classList.remove('spring-in'), 700)
 
-  // Progress bar spring reset
   const progressSection = document.querySelector('.progress-section')
   progressSection.classList.remove('spring-in')
   void progressSection.offsetWidth
@@ -249,12 +317,13 @@ function animateSongSwitch(track) {
 }
 
 // ── Lightweight track-row state update ────────────────────
-// Updates only the num cell and playing class of the active row,
-// without re-rendering the list (which would replay rowFadeIn animations).
 function updateTrackRowState() {
   const rows = document.querySelectorAll('.track-row')
-  rows.forEach((row, i) => {
-    const isActive = i === currentTrackIndex
+  rows.forEach(row => {
+    const rowPlaylist = row.dataset.playlist
+    const rowIndex = parseInt(row.dataset.index, 10)
+    const isActive = rowPlaylist === currentPlaylist && rowIndex === currentTrackIndex
+
     row.classList.toggle('playing', isActive && isPlaying)
 
     const numDefault = row.querySelector('.num-default')
@@ -268,15 +337,13 @@ function updateTrackRowState() {
       numDefault.innerHTML = `<span class="track-num-label active-num">▶</span>`
       if (overlayIcon) overlayIcon.innerHTML = `<svg viewBox="0 0 24 24" fill="white" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg>`
     } else {
-      numDefault.innerHTML = `<span class="track-num-label">${i + 1}</span>`
+      numDefault.innerHTML = `<span class="track-num-label">${rowIndex + 1}</span>`
       if (overlayIcon) overlayIcon.innerHTML = `<svg viewBox="0 0 24 24" fill="white" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg>`
     }
 
-    // Keep title colour in sync
     const titleEl = row.querySelector('.t-title')
-    if (titleEl) titleEl.style.color = (isActive && isPlaying) ? 'var(--accent)' : ''
+    if (titleEl && !filterQuery) titleEl.style.color = (isActive && isPlaying) ? 'var(--accent)' : ''
 
-    // Mini-art border
     const miniArt = row.querySelector('.t-mini-art')
     if (miniArt) {
       miniArt.style.borderColor = isActive ? 'rgba(74,158,255,0.3)' : ''
@@ -312,17 +379,24 @@ function syncLikedPlaylist() {
 }
 
 // ── Playback ──────────────────────────────────────────────
-function playSong(index) {
-  if (!currentPlaylist) return
-  const tracks = playlists[currentPlaylist]
+function playSong(index, fromPlaylist) {
+  // fromPlaylist lets search results play songs from other playlists
+  const targetPlaylist = fromPlaylist || currentPlaylist
+  if (!targetPlaylist) return
+  const tracks = playlists[targetPlaylist]
   if (!tracks || index < 0 || index >= tracks.length) return
+
+  // If switching to a different playlist context, update it
+  if (fromPlaylist && fromPlaylist !== currentPlaylist) {
+    currentPlaylist = fromPlaylist
+    loadPlaylist(fromPlaylist)
+  }
+
   if (currentSound) { currentSound.stop(); currentSound.unload(); clearInterval(progressInterval) }
   currentTrackIndex = index
   const track = tracks[index]
 
-  // Animate song info/cover only on song change
   animateSongSwitch(track)
-  // Full re-render only on song change (moves the active row highlight)
   renderTracks()
 
   const trackVol = getTrackVolume(track)
@@ -336,7 +410,6 @@ function playSong(index) {
         document.getElementById('totalTime').textContent = fmt(track.duration)
       }
     },
-    // onplay/onpause only update state indicators — no list re-render
     onplay() {
       isPlaying = true
       updatePlayBtn()
@@ -598,17 +671,45 @@ function loadPlaylist(name) {
 
 function renderTracks() {
   const list = document.getElementById('trackList')
-  if (!currentPlaylist) {
+  const q = filterQuery.trim()
+  const isSearching = q.length > 0
+  const isOverall = filterOverall && isSearching
+
+  // Update track header column label — show "Playlist" instead of "Album" in Overall mode
+  const albumHeader = document.getElementById('trackHeaderAlbum')
+  if (albumHeader) albumHeader.textContent = isOverall ? 'Playlist' : 'Album'
+
+  if (!currentPlaylist && !isOverall) {
     list.innerHTML = `<div class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg><p>Add a folder to get started</p></div>`
     return
   }
+
+  const filtered = getFilteredTracks()
+
+  if (isSearching && filtered.length === 0) {
+    list.innerHTML = `
+      <div class="search-no-results">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <circle cx="11" cy="11" r="8"/>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+        <p>No results for "${escHtml(q)}"</p>
+        <span>${isOverall ? 'No tracks match across any playlist' : 'Try searching Overall to look everywhere'}</span>
+      </div>`
+    return
+  }
+
   list.innerHTML = ''
-  playlists[currentPlaylist].forEach((track, i) => {
-    const isActive = i === currentTrackIndex
+
+  filtered.forEach(({ track, playlistName, originalIndex }, displayIndex) => {
+    const isActive = playlistName === currentPlaylist && originalIndex === currentTrackIndex
     const liked = likedSongs.has(track.path)
+
     const div = document.createElement('div')
     div.className = 'track-row' + (isActive ? ' playing' : '')
-    div.ondblclick = () => playSong(i)
+    div.dataset.playlist = playlistName
+    div.dataset.index = originalIndex
+    div.ondblclick = () => playSong(originalIndex, playlistName)
 
     const artCell = track.coverUrl
       ? `<img src="${track.coverUrl}" alt="">`
@@ -620,8 +721,17 @@ function renderTracks() {
     } else if (isActive && !isPlaying) {
       numCell = `<span class="track-num-label active-num">▶</span>`
     } else {
-      numCell = `<span class="track-num-label">${i + 1}</span>`
+      numCell = `<span class="track-num-label">${originalIndex + 1}</span>`
     }
+
+    // In Overall mode, show playlist name where album usually goes
+    const albumCell = isOverall
+      ? `<span class="t-source-badge">${escHtml(playlistName)}</span>`
+      : `<div class="t-album" title="${escHtml(track.album)}">${highlight(track.album || '', q)}</div>`
+
+    // Highlight matched fields
+    const titleHtml  = highlight(track.title  || 'Unknown', q)
+    const artistHtml = highlight(track.artist || 'Unknown Artist', q)
 
     div.innerHTML = `
       <div class="t-num">
@@ -639,13 +749,17 @@ function renderTracks() {
       <div class="t-info">
         <div class="t-mini-art">${artCell}</div>
         <div style="min-width:0">
-          <div class="t-title">${track.title}</div>
-          <div class="t-artist">${track.artist}</div>
+          <div class="t-title" style="${isActive && isPlaying ? 'color:var(--accent)' : ''}">${titleHtml}</div>
+          <div class="t-artist">${artistHtml}</div>
+          ${isOverall ? `<span class="t-source-badge">${escHtml(playlistName)}</span>` : ''}
         </div>
       </div>
-      <div class="t-album" title="${track.album}">${track.album}</div>
+      ${isOverall
+        ? `<div class="t-album" title="${escHtml(playlistName)}" style="font-size:11px;color:var(--text3)">${escHtml(playlistName)}</div>`
+        : `<div class="t-album" title="${escHtml(track.album)}">${highlight(track.album || '', q)}</div>`
+      }
       <div class="t-dur">${fmt(track.duration)}</div>
-      <div class="t-like ${liked ? 'liked' : ''}" data-path="${track.path.replace(/"/g, '&quot;')}">
+      <div class="t-like ${liked ? 'liked' : ''}" data-path="${escHtml(track.path)}">
         <svg viewBox="0 0 24 24" fill="${liked ? 'var(--like)' : 'none'}" stroke="currentColor" stroke-width="2">
           <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
         </svg>
@@ -655,7 +769,11 @@ function renderTracks() {
     const numArea = div.querySelector('.t-num')
     numArea.addEventListener('click', e => {
       e.stopPropagation()
-      isActive ? togglePlay() : playSong(i)
+      if (playlistName === currentPlaylist && originalIndex === currentTrackIndex) {
+        togglePlay()
+      } else {
+        playSong(originalIndex, playlistName)
+      }
     })
 
     const likeEl = div.querySelector('.t-like')
@@ -793,6 +911,9 @@ function setVol(e) {
   saveSession()
 }
 document.getElementById('volFill').style.height = (volume * 100) + '%'
+
+// ── Search input listener ─────────────────────────────────
+document.getElementById('searchInput').addEventListener('input', onSearchInput)
 
 // ── Window controls ───────────────────────────────────────
 function minimizeWindow() { require('@electron/remote').getCurrentWindow().minimize() }

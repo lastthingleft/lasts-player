@@ -277,7 +277,6 @@ html, body {
   background: linear-gradient(135deg, #101E3A, #141830);
 }
 
-/* FIX: like pop — reduced peak scale 1.45 → 1.18, less jarring */
 .ctrl-action-btn.pop { animation: likePopBtn 0.4s var(--ease-spring) forwards; }
 @keyframes likePopBtn {
   0%   { transform: scale(1); }
@@ -530,6 +529,224 @@ html, body {
 .add-folder-btn:active { transform: scale(0.97); background: rgba(20,70,255,0.22); }
 .add-folder-btn svg { width: 13px; height: 13px; }
 
+/* ── Search Bar ─────────────────────────────────────────── */
+.search-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 20px;
+  background: var(--bg3);
+  border-bottom: 0.5px solid var(--border);
+  flex-shrink: 0;
+}
+
+.search-input-wrap {
+  flex: 1;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.search-icon {
+  position: absolute;
+  left: 10px;
+  width: 13px;
+  height: 13px;
+  color: var(--text3);
+  pointer-events: none;
+  flex-shrink: 0;
+  transition: color 0.25s var(--ease-out);
+}
+
+.search-input-wrap:focus-within .search-icon {
+  color: var(--accent);
+}
+
+.search-input {
+  width: 100%;
+  background: rgba(255,255,255,0.04);
+  border: 0.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 7px 32px 7px 32px;
+  color: var(--text);
+  font-family: 'Poppins', sans-serif;
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.25s var(--ease-out),
+              background 0.25s var(--ease-out),
+              box-shadow 0.3s var(--ease-out);
+  caret-color: var(--accent);
+}
+
+.search-input::placeholder {
+  color: var(--text3);
+}
+
+.search-input:hover {
+  border-color: rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.06);
+}
+
+.search-input:focus {
+  border-color: rgba(20,70,255,0.5);
+  background: rgba(20,70,255,0.05);
+  box-shadow: 0 0 0 3px rgba(20,70,255,0.1);
+}
+
+.search-clear {
+  position: absolute;
+  right: 7px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255,255,255,0.1);
+  color: var(--text3);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transform: scale(0.5) rotate(45deg);
+  pointer-events: none;
+  transition: opacity 0.22s var(--ease-out),
+              transform 0.28s var(--ease-spring),
+              background 0.15s,
+              color 0.15s;
+}
+
+.search-clear svg {
+  width: 8px;
+  height: 8px;
+}
+
+.search-clear:hover {
+  background: rgba(255,255,255,0.16);
+  color: var(--text);
+}
+
+.search-input-wrap.has-query .search-clear {
+  opacity: 1;
+  transform: scale(1) rotate(0deg);
+  pointer-events: auto;
+}
+
+/* Overall toggle pill */
+.overall-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  user-select: none;
+  flex-shrink: 0;
+  padding: 5px 9px;
+  border-radius: var(--radius-sm);
+  border: 0.5px solid var(--border);
+  background: rgba(255,255,255,0.03);
+  transition: background 0.2s var(--ease-out),
+              border-color 0.2s var(--ease-out),
+              transform 0.2s var(--ease-spring);
+}
+
+.overall-toggle:hover {
+  background: rgba(255,255,255,0.06);
+  border-color: rgba(255,255,255,0.11);
+  transform: translateY(-1px);
+}
+
+.overall-toggle:active {
+  transform: scale(0.97);
+}
+
+.overall-label {
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--text2);
+  transition: color 0.25s var(--ease-out);
+  white-space: nowrap;
+}
+
+.overall-toggle.active .overall-label {
+  color: var(--accent);
+}
+
+.toggle-track {
+  width: 28px;
+  height: 15px;
+  border-radius: 8px;
+  background: rgba(255,255,255,0.12);
+  position: relative;
+  flex-shrink: 0;
+  border: 0.5px solid rgba(255,255,255,0.07);
+  transition: background 0.3s var(--ease-out),
+              border-color 0.3s var(--ease-out);
+}
+
+.overall-toggle.active .toggle-track {
+  background: var(--accent);
+  border-color: transparent;
+}
+
+.toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: white;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.35);
+  transition: transform 0.3s var(--ease-spring),
+              box-shadow 0.2s;
+}
+
+.overall-toggle.active .toggle-thumb {
+  transform: translateX(13px);
+  box-shadow: 0 1px 6px rgba(20,70,255,0.5);
+}
+
+/* Search results — "Overall" source badge on track rows */
+.t-source-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text3);
+  background: rgba(255,255,255,0.05);
+  border: 0.5px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  margin-top: 2px;
+  max-width: 110px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Search highlight */
+mark.sh {
+  background: none;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* No results state */
+.search-no-results {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 180px;
+  color: var(--text3);
+  animation: rowFadeIn 0.3s var(--ease-out);
+}
+.search-no-results svg { width: 28px; height: 28px; opacity: 0.5; }
+.search-no-results p { font-size: 12.5px; }
+.search-no-results span { font-size: 11px; opacity: 0.5; }
+
+/* ── Track header / list ─────────────────────────────────── */
 .track-header {
   display: grid;
   grid-template-columns: 52px 1fr 160px 56px 40px;
@@ -699,7 +916,6 @@ html, body {
 .t-like.liked:hover { transform: scale(1.15); }
 .t-like svg { width: 12px; height: 12px; }
 
-/* FIX: reduced peak scale 1.45 → 1.18 */
 .t-like.pop { animation: likePop 0.4s var(--ease-spring) forwards; }
 @keyframes likePop {
   0%   { transform: scale(1); }

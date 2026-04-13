@@ -167,10 +167,41 @@
         </div>
       </div>
 
+      <!-- Search Bar -->
+      <div class="search-bar-row">
+        <div class="search-input-wrap" id="searchInputWrap">
+          <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"/>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          <input
+            type="text"
+            id="searchInput"
+            class="search-input"
+            placeholder="Search tracks…"
+            autocomplete="off"
+            spellcheck="false"
+          >
+          <button class="search-clear" id="searchClear" onclick="clearSearch()" aria-label="Clear search">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <line x1="18" y1="6" x2="6" y2="18"/>
+              <line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        <label class="overall-toggle" id="overallToggleLabel" title="Search across all playlists">
+          <span class="overall-label">Overall</span>
+          <div class="toggle-track" id="overallToggleTrack">
+            <div class="toggle-thumb" id="overallToggleThumb"></div>
+          </div>
+          <input type="checkbox" id="overallToggle" style="display:none" onchange="onOverallToggle()">
+        </label>
+      </div>
+
       <div class="track-header">
         <span></span>
         <span>Title</span>
-        <span>Album</span>
+        <span id="trackHeaderAlbum">Album</span>
         <span style="text-align:right">Time</span>
         <span></span>
       </div>
