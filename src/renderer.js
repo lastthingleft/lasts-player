@@ -22,6 +22,11 @@ let progressInterval = null
 let isDraggingProgress = false
 let isDraggingVol = false
 
+// ── Shuffle State ─────────────────────────────────────────
+let shuffleHistory = []       // ordered list of indices played so far
+let shuffleHistoryPos = -1    // current position in shuffleHistory
+let shuffleQueue = []         // pre-shuffled queue of remaining indices
+
 // ── Search State ──────────────────────────────────────────
 let filterQuery = ''
 let filterOverall = false
@@ -202,7 +207,6 @@ async function analyzeTrackLoudness(filePath) {
 }
 
 // ── Search helpers ────────────────────────────────────────
-// Escapes a string for safe insertion into HTML
 function escHtml(str) {
   return String(str)
     .replace(/&/g, '&amp;')
@@ -211,7 +215,6 @@ function escHtml(str) {
     .replace(/"/g, '&quot;')
 }
 
-// Returns HTML with matching parts wrapped in <mark class="sh">
 function highlight(text, query) {
   if (!query) return escHtml(text)
   const escaped = escHtml(text)
@@ -219,7 +222,6 @@ function highlight(text, query) {
   return escaped.replace(new RegExp(`(${escapedQuery})`, 'gi'), '<mark class="sh">$1</mark>')
 }
 
-// Checks whether a track matches the current filterQuery
 function trackMatchesQuery(track, query) {
   if (!query) return true
   const q = query.toLowerCase()
@@ -231,12 +233,10 @@ function trackMatchesQuery(track, query) {
   )
 }
 
-// Returns the list of { track, playlistName, originalIndex } to render
 function getFilteredTracks() {
   const q = filterQuery.trim()
 
   if (filterOverall && q) {
-    // Search across every playlist (skip duplicates by file path)
     const seen = new Set()
     const results = []
     for (const [name, tracks] of Object.entries(playlists)) {
@@ -378,15 +378,46 @@ function syncLikedPlaylist() {
   savePlaylists()
 }
 
+// ── Shuffle helpers ───────────────────────────────────────
+// Build a Fisher-Yates shuffled queue of all track indices,
+// excluding `excludeIndex` as the first pick (current song).
+function buildShuffleQueue(trackCount, excludeIndex) {
+  const indices = []
+  for (let i = 0; i < trackCount; i++) {
+    if (i !== excludeIndex) indices.push(i)
+  }
+  // Fisher-Yates shuffle
+  for (let i = indices.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [indices[i], indices[j]] = [indices[j], indices[i]]
+  }
+  return indices
+}
+
+// Call when shuffle is enabled or playlist changes — seeds the queue
+// with the current song already in history at position 0.
+function initShuffleState(currentIndex) {
+  const tracks = playlists[currentPlaylist]
+  if (!tracks) return
+  shuffleQueue = buildShuffleQueue(tracks.length, currentIndex)
+  shuffleHistory = currentIndex >= 0 ? [currentIndex] : []
+  shuffleHistoryPos = shuffleHistory.length - 1
+}
+
+// Reset shuffle state (e.g. when shuffle is turned off or playlist changes)
+function resetShuffleState() {
+  shuffleHistory = []
+  shuffleHistoryPos = -1
+  shuffleQueue = []
+}
+
 // ── Playback ──────────────────────────────────────────────
 function playSong(index, fromPlaylist) {
-  // fromPlaylist lets search results play songs from other playlists
   const targetPlaylist = fromPlaylist || currentPlaylist
   if (!targetPlaylist) return
   const tracks = playlists[targetPlaylist]
   if (!tracks || index < 0 || index >= tracks.length) return
 
-  // If switching to a different playlist context, update it
   if (fromPlaylist && fromPlaylist !== currentPlaylist) {
     currentPlaylist = fromPlaylist
     loadPlaylist(fromPlaylist)
@@ -482,18 +513,53 @@ function nextSong() {
   if (!currentPlaylist) return
   const tracks = playlists[currentPlaylist]
   if (!tracks?.length) return
-  let next
-  if (isShuffle) { do { next = Math.floor(Math.random() * tracks.length) } while (next === currentTrackIndex && tracks.length > 1) }
-  else { next = (currentTrackIndex + 1) % tracks.length; if (next === 0 && repeatMode === 'none') { stopPlayback(); return } }
-  playSong(next)
+
+  if (isShuffle) {
+    // If we're not at the end of history, move forward through it
+    if (shuffleHistoryPos < shuffleHistory.length - 1) {
+      shuffleHistoryPos++
+      playSong(shuffleHistory[shuffleHistoryPos])
+      return
+    }
+
+    // Need a new song from the queue
+    if (shuffleQueue.length === 0) {
+      if (repeatMode === 'none') { stopPlayback(); return }
+      // Refill queue for repeat all, excluding current
+      shuffleQueue = buildShuffleQueue(tracks.length, currentTrackIndex)
+    }
+
+    const next = shuffleQueue.shift()
+    shuffleHistory.push(next)
+    shuffleHistoryPos = shuffleHistory.length - 1
+    playSong(next)
+  } else {
+    const next = (currentTrackIndex + 1) % tracks.length
+    if (next === 0 && repeatMode === 'none') { stopPlayback(); return }
+    playSong(next)
+  }
 }
 
 function prevSong() {
   if (!currentPlaylist) return
   const tracks = playlists[currentPlaylist]
   if (!tracks?.length) return
+
+  // If more than 3 seconds in, restart current song
   if (currentSound && currentSound.seek() > 3) { currentSound.seek(0); return }
-  playSong((currentTrackIndex - 1 + tracks.length) % tracks.length)
+
+  if (isShuffle) {
+    // Go back through shuffle history
+    if (shuffleHistoryPos > 0) {
+      shuffleHistoryPos--
+      playSong(shuffleHistory[shuffleHistoryPos])
+    } else {
+      // Already at the start of history — restart current
+      if (currentSound) currentSound.seek(0)
+    }
+  } else {
+    playSong((currentTrackIndex - 1 + tracks.length) % tracks.length)
+  }
 }
 
 function stopPlayback() {
@@ -509,6 +575,13 @@ function toggleShuffle() {
   btn.classList.toggle('active', isShuffle)
   btn.style.transform = 'scale(0.9)'
   setTimeout(() => { btn.style.transform = '' }, 200)
+
+  if (isShuffle) {
+    // Seed shuffle state with current track
+    initShuffleState(currentTrackIndex)
+  } else {
+    resetShuffleState()
+  }
 }
 
 function toggleRepeat() {
@@ -626,6 +699,8 @@ async function addFolder() {
     tracks.push(track)
   }
   playlists[folderName] = tracks
+  // Reset shuffle state when a new playlist is loaded
+  if (isShuffle) initShuffleState(-1)
   renderPlaylists(); loadPlaylist(folderName); savePlaylists()
 }
 
@@ -666,6 +741,8 @@ function loadPlaylist(name) {
   document.getElementById('runtime').textContent = totalRuntime(tracks)
   const genres = [...new Set(tracks.map(t => t.genre).filter(Boolean))].slice(0, 3)
   document.getElementById('playlistGenre').textContent = genres.join(' · ')
+  // Reset shuffle state when switching playlists
+  if (isShuffle) initShuffleState(currentTrackIndex >= 0 && currentTrackIndex < tracks.length ? currentTrackIndex : -1)
   renderTracks(); renderPlaylists()
 }
 
@@ -675,7 +752,6 @@ function renderTracks() {
   const isSearching = q.length > 0
   const isOverall = filterOverall && isSearching
 
-  // Update track header column label — show "Playlist" instead of "Album" in Overall mode
   const albumHeader = document.getElementById('trackHeaderAlbum')
   if (albumHeader) albumHeader.textContent = isOverall ? 'Playlist' : 'Album'
 
@@ -724,12 +800,10 @@ function renderTracks() {
       numCell = `<span class="track-num-label">${originalIndex + 1}</span>`
     }
 
-    // In Overall mode, show playlist name where album usually goes
     const albumCell = isOverall
       ? `<span class="t-source-badge">${escHtml(playlistName)}</span>`
       : `<div class="t-album" title="${escHtml(track.album)}">${highlight(track.album || '', q)}</div>`
 
-    // Highlight matched fields
     const titleHtml  = highlight(track.title  || 'Unknown', q)
     const artistHtml = highlight(track.artist || 'Unknown Artist', q)
 
@@ -772,6 +846,16 @@ function renderTracks() {
       if (playlistName === currentPlaylist && originalIndex === currentTrackIndex) {
         togglePlay()
       } else {
+        // When manually picking a song in shuffle mode, update shuffle history
+        if (isShuffle) {
+          // Truncate forward history and push new pick
+          shuffleHistory = shuffleHistory.slice(0, shuffleHistoryPos + 1)
+          shuffleHistory.push(originalIndex)
+          shuffleHistoryPos = shuffleHistory.length - 1
+          // Remove this index from the queue if present
+          const qi = shuffleQueue.indexOf(originalIndex)
+          if (qi !== -1) shuffleQueue.splice(qi, 1)
+        }
         playSong(originalIndex, playlistName)
       }
     })
@@ -825,6 +909,7 @@ function deletePlaylist(name) {
   delete playlists[name]; delete playlistCovers[name]
   if (currentPlaylist === name) {
     currentPlaylist = null; stopPlayback()
+    resetShuffleState()
     document.getElementById('playlistTitle').textContent = 'Select a playlist'
     document.getElementById('songCount').textContent = '0 songs'
     document.getElementById('runtime').textContent = '—'
