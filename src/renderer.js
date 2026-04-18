@@ -6,6 +6,7 @@ const mm = require('music-metadata')
 const LIKED_PLAYLIST = '❤️ Liked Songs'
 const DATA_PATH = path.join(require('@electron/remote').app.getPath('userData'), 'playlists.json')
 const SESSION_PATH = path.join(require('@electron/remote').app.getPath('userData'), 'session.json')
+const SCRIBE_DIR = path.join(require('@electron/remote').app.getPath('userData'), 'scribe')
 
 // ── State ─────────────────────────────────────────────────
 let playlists = {}
@@ -23,13 +24,72 @@ let isDraggingProgress = false
 let isDraggingVol = false
 
 // ── Shuffle State ─────────────────────────────────────────
-let shuffleHistory = []       // ordered list of indices played so far
-let shuffleHistoryPos = -1    // current position in shuffleHistory
-let shuffleQueue = []         // pre-shuffled queue of remaining indices
+let shuffleHistory = []
+let shuffleHistoryPos = -1
+let shuffleQueue = []
 
 // ── Search State ──────────────────────────────────────────
 let filterQuery = ''
 let filterOverall = false
+
+// ── Scribe State ──────────────────────────────────────────
+let scribeData = {}           // { [trackPath]: [{ start, end, text }] }
+let lyricsVisible = false
+let lyricsSyncInterval = null
+let currentLyricIndex = -1
+
+// Ensure scribe dir exists
+if (!fs.existsSync(SCRIBE_DIR)) fs.mkdirSync(SCRIBE_DIR, { recursive: true })
+
+// ── SRT helpers ───────────────────────────────────────────
+function srtTimeToSeconds(t) {
+  // HH:MM:SS,mmm
+  const m = t.match(/(\d+):(\d+):(\d+)[,.](\d+)/)
+  if (!m) return 0
+  return parseInt(m[1]) * 3600 + parseInt(m[2]) * 60 + parseInt(m[3]) + parseInt(m[4]) / 1000
+}
+
+function parseSRT(raw) {
+  const cues = []
+  const blocks = raw.trim().split(/\n\s*\n/)
+  for (const block of blocks) {
+    const lines = block.trim().split('\n')
+    if (lines.length < 3) continue
+    // lines[0] = index, lines[1] = timecodes, lines[2+] = text
+    const tc = lines[1].match(/(\S+)\s*-->\s*(\S+)/)
+    if (!tc) continue
+    cues.push({
+      start: srtTimeToSeconds(tc[1]),
+      end:   srtTimeToSeconds(tc[2]),
+      text:  lines.slice(2).join('\n').trim()
+    })
+  }
+  return cues
+}
+
+function scribeKeyFor(trackPath) {
+  // Use a sanitised filename as the key
+  return path.join(SCRIBE_DIR, Buffer.from(trackPath).toString('base64').replace(/[/+=]/g, '_') + '.srt')
+}
+
+function loadScribeForTrack(trackPath) {
+  const file = scribeKeyFor(trackPath)
+  if (!fs.existsSync(file)) return null
+  try {
+    const raw = fs.readFileSync(file, 'utf8')
+    return parseSRT(raw)
+  } catch (e) { return null }
+}
+
+function saveScribeForTrack(trackPath, rawSRT) {
+  const file = scribeKeyFor(trackPath)
+  fs.writeFileSync(file, rawSRT, 'utf8')
+  scribeData[trackPath] = parseSRT(rawSRT)
+}
+
+function hasScribe(trackPath) {
+  return !!scribeData[trackPath] || fs.existsSync(scribeKeyFor(trackPath))
+}
 
 // ── Mouse tracking ────────────────────────────────────────
 document.addEventListener('mousemove', e => {
@@ -49,12 +109,7 @@ document.addEventListener('mousemove', e => {
 function saveSession() {
   try {
     const seek = (currentSound && currentSound.playing()) ? currentSound.seek() : 0
-    const session = {
-      currentPlaylist,
-      currentTrackIndex,
-      volume,
-      seek: seek || 0
-    }
+    const session = { currentPlaylist, currentTrackIndex, volume, seek: seek || 0 }
     fs.writeFileSync(SESSION_PATH, JSON.stringify(session, null, 2), 'utf8')
   } catch (e) { console.error('Session save failed:', e) }
 }
@@ -76,8 +131,7 @@ function savePlaylists() {
     for (const [name, tracks] of Object.entries(playlists)) {
       serialisable[name] = tracks.map(t => ({
         title: t.title, artist: t.artist, album: t.album,
-        genre: t.genre, duration: t.duration, path: t.path,
-        replayGain: t.replayGain
+        genre: t.genre, duration: t.duration, path: t.path, replayGain: t.replayGain
       }))
     }
     fs.writeFileSync(DATA_PATH, JSON.stringify({ playlists: serialisable, likedSongs: [...likedSongs], playlistCovers }, null, 2), 'utf8')
@@ -122,6 +176,7 @@ async function loadPlaylists() {
         renderTracks()
         isPlaying = false
         updatePlayBtn()
+        updateScribeBtn()
 
         if (currentSound) { currentSound.stop(); currentSound.unload() }
         currentSound = new Howl({
@@ -134,21 +189,8 @@ async function loadPlaylists() {
               document.getElementById('currentTime').textContent = fmt(session.seek)
             }
           },
-          onplay() {
-            isPlaying = true
-            updatePlayBtn()
-            updateTrackRowState()
-            clearInterval(progressInterval)
-            progressInterval = setInterval(updateProgress, 300)
-            saveSession()
-          },
-          onpause() {
-            isPlaying = false
-            updatePlayBtn()
-            updateTrackRowState()
-            clearInterval(progressInterval)
-            saveSession()
-          },
+          onplay() { isPlaying = true; updatePlayBtn(); updateTrackRowState(); clearInterval(progressInterval); progressInterval = setInterval(updateProgress, 300); saveSession() },
+          onpause() { isPlaying = false; updatePlayBtn(); updateTrackRowState(); clearInterval(progressInterval); saveSession() },
           onstop() { isPlaying = false; updatePlayBtn(); clearInterval(progressInterval) },
           onend() { clearInterval(progressInterval); repeatMode === 'one' ? playSong(currentTrackIndex) : nextSong() },
           onloaderror(id, err) { console.error('Load error:', err); nextSong() }
@@ -186,8 +228,6 @@ function randomColor(str) {
   for (let c of str) h = (h * 31 + c.charCodeAt(0)) % colors.length
   return colors[h]
 }
-
-// ── Volume normalization (ReplayGain) ─────────────────────
 function getTrackVolume(track) {
   if (typeof track.replayGain === 'number') {
     const gain = track.replayGain
@@ -197,31 +237,16 @@ function getTrackVolume(track) {
   return 1.0
 }
 
-async function analyzeTrackLoudness(filePath) {
-  try {
-    const meta = await mm.parseFile(filePath, { duration: true, skipCovers: true })
-    const rg = meta.common?.replaygain_track_gain
-    if (rg && typeof rg.dB === 'number') return rg.dB
-    return 0
-  } catch (e) { return 0 }
-}
-
 // ── Search helpers ────────────────────────────────────────
 function escHtml(str) {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')
 }
-
 function highlight(text, query) {
   if (!query) return escHtml(text)
   const escaped = escHtml(text)
   const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   return escaped.replace(new RegExp(`(${escapedQuery})`, 'gi'), '<mark class="sh">$1</mark>')
 }
-
 function trackMatchesQuery(track, query) {
   if (!query) return true
   const q = query.toLowerCase()
@@ -232,51 +257,37 @@ function trackMatchesQuery(track, query) {
     (track.genre  || '').toLowerCase().includes(q)
   )
 }
-
 function getFilteredTracks() {
   const q = filterQuery.trim()
-
   if (filterOverall && q) {
-    const seen = new Set()
-    const results = []
+    const seen = new Set(); const results = []
     for (const [name, tracks] of Object.entries(playlists)) {
       for (let i = 0; i < tracks.length; i++) {
         const t = tracks[i]
-        if (!seen.has(t.path) && trackMatchesQuery(t, q)) {
-          seen.add(t.path)
-          results.push({ track: t, playlistName: name, originalIndex: i })
-        }
+        if (!seen.has(t.path) && trackMatchesQuery(t, q)) { seen.add(t.path); results.push({ track: t, playlistName: name, originalIndex: i }) }
       }
     }
     return results
   }
-
   if (!currentPlaylist || !playlists[currentPlaylist]) return []
-
-  return playlists[currentPlaylist]
-    .map((track, i) => ({ track, playlistName: currentPlaylist, originalIndex: i }))
-    .filter(({ track }) => trackMatchesQuery(track, q))
+  return playlists[currentPlaylist].map((track, i) => ({ track, playlistName: currentPlaylist, originalIndex: i })).filter(({ track }) => trackMatchesQuery(track, q))
 }
 
 // ── Search UI handlers ────────────────────────────────────
 function onSearchInput(e) {
   filterQuery = e.target.value
-  const wrap = document.getElementById('searchInputWrap')
-  wrap.classList.toggle('has-query', filterQuery.length > 0)
+  document.getElementById('searchInputWrap').classList.toggle('has-query', filterQuery.length > 0)
   renderTracks()
 }
-
 function clearSearch() {
   filterQuery = ''
   document.getElementById('searchInput').value = ''
   document.getElementById('searchInputWrap').classList.remove('has-query')
   renderTracks()
 }
-
 function onOverallToggle() {
   filterOverall = document.getElementById('overallToggle').checked
-  const label = document.getElementById('overallToggleLabel')
-  label.classList.toggle('active', filterOverall)
+  document.getElementById('overallToggleLabel').classList.toggle('active', filterOverall)
   renderTracks()
 }
 
@@ -286,7 +297,6 @@ function animateSongSwitch(track) {
   coverEl.classList.remove('switching', 'sweep')
   void coverEl.offsetWidth
   coverEl.classList.add('sweep')
-
   setTimeout(() => {
     coverEl.innerHTML = track.coverUrl
       ? `<img src="${track.coverUrl}" alt="cover">`
@@ -298,12 +308,10 @@ function animateSongSwitch(track) {
   const songInfo = document.querySelector('.song-info')
   songInfo.classList.remove('spring-in')
   void songInfo.offsetWidth
-
   document.getElementById('songName').textContent = track.title || 'Unknown'
   document.getElementById('artistName').textContent = track.artist || 'Unknown Artist'
   document.getElementById('genreName').textContent = track.genre || track.album || '—'
   document.getElementById('totalTime').textContent = fmt(track.duration || 0)
-
   songInfo.classList.add('spring-in')
   setTimeout(() => songInfo.classList.remove('spring-in'), 700)
 
@@ -316,20 +324,17 @@ function animateSongSwitch(track) {
   updateLikeBtn()
 }
 
-// ── Lightweight track-row state update ────────────────────
+// ── Track-row state update ─────────────────────────────────
 function updateTrackRowState() {
   const rows = document.querySelectorAll('.track-row')
   rows.forEach(row => {
     const rowPlaylist = row.dataset.playlist
     const rowIndex = parseInt(row.dataset.index, 10)
     const isActive = rowPlaylist === currentPlaylist && rowIndex === currentTrackIndex
-
     row.classList.toggle('playing', isActive && isPlaying)
-
     const numDefault = row.querySelector('.num-default')
     const overlayIcon = row.querySelector('.overlay-icon')
     if (!numDefault) return
-
     if (isActive && isPlaying) {
       numDefault.innerHTML = `<div class="playing-bars"><span></span><span></span><span></span><span></span></div>`
       if (overlayIcon) overlayIcon.innerHTML = `<svg viewBox="0 0 24 24" fill="white" stroke="none"><rect x="6" y="4" width="4" height="16" rx="1.5"/><rect x="14" y="4" width="4" height="16" rx="1.5"/></svg>`
@@ -340,10 +345,8 @@ function updateTrackRowState() {
       numDefault.innerHTML = `<span class="track-num-label">${rowIndex + 1}</span>`
       if (overlayIcon) overlayIcon.innerHTML = `<svg viewBox="0 0 24 24" fill="white" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg>`
     }
-
     const titleEl = row.querySelector('.t-title')
     if (titleEl && !filterQuery) titleEl.style.color = (isActive && isPlaying) ? 'var(--accent)' : ''
-
     const miniArt = row.querySelector('.t-mini-art')
     if (miniArt) {
       miniArt.style.borderColor = isActive ? 'rgba(74,158,255,0.3)' : ''
@@ -370,32 +373,22 @@ function syncLikedPlaylist() {
         renderTracks()
       }
     }
-  } else {
-    playlists[LIKED_PLAYLIST] = liked
-  }
+  } else { playlists[LIKED_PLAYLIST] = liked }
   renderPlaylists()
   if (currentPlaylist === LIKED_PLAYLIST) loadPlaylist(LIKED_PLAYLIST)
   savePlaylists()
 }
 
 // ── Shuffle helpers ───────────────────────────────────────
-// Build a Fisher-Yates shuffled queue of all track indices,
-// excluding `excludeIndex` as the first pick (current song).
 function buildShuffleQueue(trackCount, excludeIndex) {
   const indices = []
-  for (let i = 0; i < trackCount; i++) {
-    if (i !== excludeIndex) indices.push(i)
-  }
-  // Fisher-Yates shuffle
+  for (let i = 0; i < trackCount; i++) { if (i !== excludeIndex) indices.push(i) }
   for (let i = indices.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [indices[i], indices[j]] = [indices[j], indices[i]]
   }
   return indices
 }
-
-// Call when shuffle is enabled or playlist changes — seeds the queue
-// with the current song already in history at position 0.
 function initShuffleState(currentIndex) {
   const tracks = playlists[currentPlaylist]
   if (!tracks) return
@@ -403,12 +396,205 @@ function initShuffleState(currentIndex) {
   shuffleHistory = currentIndex >= 0 ? [currentIndex] : []
   shuffleHistoryPos = shuffleHistory.length - 1
 }
-
-// Reset shuffle state (e.g. when shuffle is turned off or playlist changes)
 function resetShuffleState() {
-  shuffleHistory = []
-  shuffleHistoryPos = -1
-  shuffleQueue = []
+  shuffleHistory = []; shuffleHistoryPos = -1; shuffleQueue = []
+}
+
+// ── Scribe btn ────────────────────────────────────────────
+function updateScribeBtn() {
+  const btn = document.getElementById('scribeBtn')
+  if (!btn) return
+  const track = currentPlaylist && currentTrackIndex >= 0 ? playlists[currentPlaylist]?.[currentTrackIndex] : null
+  const active = !!(track && hasScribe(track.path))
+  btn.classList.toggle('scribe-active', active)
+  btn.style.pointerEvents = active ? 'auto' : 'none'
+  btn.style.opacity = active ? '1' : '0.28'
+  btn.title = active ? 'View Lyrics (Scribe)' : 'No lyrics scribes for this track'
+}
+
+// ── Lyrics view ───────────────────────────────────────────
+function openLyricsView() {
+  const track = currentPlaylist && currentTrackIndex >= 0 ? playlists[currentPlaylist]?.[currentTrackIndex] : null
+  if (!track) return
+  const cues = scribeData[track.path] || loadScribeForTrack(track.path)
+  if (!cues) return
+  scribeData[track.path] = cues
+
+  lyricsVisible = true
+  const lyricsPanel = document.getElementById('lyricsPanel')
+  const trackList   = document.getElementById('trackList')
+  const trackHeader = document.querySelector('.track-header')
+
+  // Build lyrics lines
+  renderLyricsLines(cues)
+
+  // Set background tint from cover
+  setLyricsBg(track)
+
+  // Animate: tracklist slides down, lyrics slides up
+  lyricsPanel.style.display = 'flex'
+  requestAnimationFrame(() => {
+    lyricsPanel.classList.add('lyrics-visible')
+    trackList.classList.add('tracklist-hidden')
+    if (trackHeader) trackHeader.classList.add('tracklist-hidden')
+  })
+
+  // Update mic button icon
+  const btn = document.getElementById('scribeBtn')
+  if (btn) btn.classList.add('lyrics-open')
+
+  // Start sync
+  startLyricsSync(cues)
+}
+
+function closeLyricsView() {
+  lyricsVisible = false
+  const lyricsPanel = document.getElementById('lyricsPanel')
+  const trackList   = document.getElementById('trackList')
+  const trackHeader = document.querySelector('.track-header')
+
+  lyricsPanel.classList.remove('lyrics-visible')
+  trackList.classList.remove('tracklist-hidden')
+  if (trackHeader) trackHeader.classList.remove('tracklist-hidden')
+
+  const btn = document.getElementById('scribeBtn')
+  if (btn) btn.classList.remove('lyrics-open')
+
+  stopLyricsSync()
+  currentLyricIndex = -1
+
+  setTimeout(() => { lyricsPanel.style.display = 'none' }, 400)
+}
+
+function toggleLyricsView() {
+  if (lyricsVisible) { closeLyricsView() } else { openLyricsView() }
+}
+
+function setLyricsBg(track) {
+  const panel = document.getElementById('lyricsPanel')
+  // Default dark theme bg — always use the app's dark palette
+  panel.style.background = 'linear-gradient(180deg, #1a1d24 0%, #13161b 100%)'
+}
+
+function renderLyricsLines(cues) {
+  const container = document.getElementById('lyricsLines')
+  container.innerHTML = ''
+  cues.forEach((cue, i) => {
+    const div = document.createElement('div')
+    div.className = 'lyric-line'
+    div.dataset.index = i
+    div.textContent = cue.text
+    container.appendChild(div)
+  })
+}
+
+function startLyricsSync(cues) {
+  stopLyricsSync()
+  currentLyricIndex = -1
+  lyricsSyncInterval = setInterval(() => {
+    if (!currentSound || !lyricsVisible) return
+    const seek = currentSound.seek()
+    if (typeof seek !== 'number') return
+
+    let active = -1
+    for (let i = 0; i < cues.length; i++) {
+      if (seek >= cues[i].start && seek < cues[i].end) { active = i; break }
+    }
+
+    if (active !== currentLyricIndex) {
+      currentLyricIndex = active
+      highlightLyric(active)
+    }
+  }, 100)
+}
+
+function stopLyricsSync() {
+  clearInterval(lyricsSyncInterval)
+  lyricsSyncInterval = null
+}
+
+function highlightLyric(index) {
+  const container = document.getElementById('lyricsLines')
+  if (!container) return
+  const lines = container.querySelectorAll('.lyric-line')
+  lines.forEach((line, i) => {
+    line.classList.toggle('lyric-active', i === index)
+    line.classList.toggle('lyric-past', i < index)
+  })
+  // Scroll active line into view smoothly
+  if (index >= 0 && lines[index]) {
+    lines[index].scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
+}
+
+// ── Scribe Editor ─────────────────────────────────────────
+let scribeEditTarget = null  // { track, playlistName, originalIndex }
+
+function openScribeEditor(trackPath, trackTitle) {
+  scribeEditTarget = trackPath
+
+  // Load existing SRT if present
+  const existing = (() => {
+    const file = scribeKeyFor(trackPath)
+    if (fs.existsSync(file)) return fs.readFileSync(file, 'utf8')
+    return ''
+  })()
+
+  const editor = document.getElementById('scribeEditorBackdrop')
+  const textarea = document.getElementById('scribeTextarea')
+  const titleEl = document.getElementById('scribeEditorTitle')
+
+  titleEl.textContent = `Scribe — ${trackTitle}`
+  textarea.value = existing
+
+  editor.style.display = 'flex'
+  requestAnimationFrame(() => editor.classList.add('scribe-editor-visible'))
+  textarea.focus()
+}
+
+function closeScribeEditor() {
+  const editor = document.getElementById('scribeEditorBackdrop')
+  editor.classList.remove('scribe-editor-visible')
+  setTimeout(() => { editor.style.display = 'none' }, 350)
+  scribeEditTarget = null
+}
+
+function saveScribe() {
+  if (!scribeEditTarget) return
+  const raw = document.getElementById('scribeTextarea').value.trim()
+  if (!raw) { closeScribeEditor(); return }
+  saveScribeForTrack(scribeEditTarget, raw)
+  updateScribeBtn()
+  closeScribeEditor()
+}
+
+// ── Track context menu (with Scribe option) ───────────────
+let _ctxMenuTrack = null  // holds track ref so onclick doesn't need path in HTML
+
+function showTrackCtxMenu(e, track, playlistName, originalIndex) {
+  e.preventDefault()
+  e.stopPropagation()
+  _ctxMenuTrack = track
+  const menu = document.getElementById('ctxMenu')
+  const scribes = hasScribe(track.path)
+  menu.innerHTML = `
+    <div class="ctx-item" id="ctxScribeItem">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 20h9"/>
+        <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+      </svg>
+      ${scribes ? 'Edit Scribe' : 'Scribe'}
+    </div>
+  `
+  document.getElementById('ctxScribeItem').addEventListener('click', () => {
+    menu.style.display = 'none'
+    if (_ctxMenuTrack) openScribeEditor(_ctxMenuTrack.path, _ctxMenuTrack.title || 'Unknown')
+  })
+  menu.style.display = 'block'
+  const x = Math.min(e.clientX, window.innerWidth - 180)
+  const y = Math.min(e.clientY, window.innerHeight - 80)
+  menu.style.left = x + 'px'
+  menu.style.top = y + 'px'
 }
 
 // ── Playback ──────────────────────────────────────────────
@@ -424,11 +610,16 @@ function playSong(index, fromPlaylist) {
   }
 
   if (currentSound) { currentSound.stop(); currentSound.unload(); clearInterval(progressInterval) }
+
+  // Close lyrics if open, since new song may not have scribe
+  if (lyricsVisible) closeLyricsView()
+
   currentTrackIndex = index
   const track = tracks[index]
 
   animateSongSwitch(track)
-  renderTracks()
+  updateTrackRowState()
+  updateScribeBtn()
 
   const trackVol = getTrackVolume(track)
   const effectiveVol = Math.min(1.0, volume * trackVol)
@@ -441,21 +632,8 @@ function playSong(index, fromPlaylist) {
         document.getElementById('totalTime').textContent = fmt(track.duration)
       }
     },
-    onplay() {
-      isPlaying = true
-      updatePlayBtn()
-      updateTrackRowState()
-      clearInterval(progressInterval)
-      progressInterval = setInterval(updateProgress, 300)
-      saveSession()
-    },
-    onpause() {
-      isPlaying = false
-      updatePlayBtn()
-      updateTrackRowState()
-      clearInterval(progressInterval)
-      saveSession()
-    },
+    onplay() { isPlaying = true; updatePlayBtn(); updateTrackRowState(); clearInterval(progressInterval); progressInterval = setInterval(updateProgress, 300); saveSession() },
+    onpause() { isPlaying = false; updatePlayBtn(); updateTrackRowState(); clearInterval(progressInterval); saveSession() },
     onstop() { isPlaying = false; updatePlayBtn(); clearInterval(progressInterval) },
     onend() { clearInterval(progressInterval); repeatMode === 'one' ? playSong(currentTrackIndex) : nextSong() },
     onloaderror(id, err) { console.error('Load error:', err); nextSong() }
@@ -490,20 +668,13 @@ function togglePlay() {
     if (currentPlaylist && playlists[currentPlaylist]?.length > 0) playSong(currentTrackIndex >= 0 ? currentTrackIndex : 0)
     return
   }
-  if (currentSound.playing()) {
-    currentSound.pause()
-  } else {
-    currentSound.play()
-  }
+  currentSound.playing() ? currentSound.pause() : currentSound.play()
 }
 
 function updatePlayBtn() {
   const icon = document.getElementById('playIcon')
-  if (isPlaying) {
-    icon.innerHTML = '<rect x="6" y="4" width="4" height="16" rx="1.5"/><rect x="14" y="4" width="4" height="16" rx="1.5"/>'
-  } else {
-    icon.innerHTML = '<polygon points="5 3 19 12 5 21 5 3"/>'
-  }
+  if (isPlaying) { icon.innerHTML = '<rect x="6" y="4" width="4" height="16" rx="1.5"/><rect x="14" y="4" width="4" height="16" rx="1.5"/>' }
+  else { icon.innerHTML = '<polygon points="5 3 19 12 5 21 5 3"/>' }
   const btn = document.getElementById('playBtn')
   btn.style.transform = 'scale(0.9)'
   setTimeout(() => { btn.style.transform = '' }, 150)
@@ -513,25 +684,14 @@ function nextSong() {
   if (!currentPlaylist) return
   const tracks = playlists[currentPlaylist]
   if (!tracks?.length) return
-
   if (isShuffle) {
-    // If we're not at the end of history, move forward through it
-    if (shuffleHistoryPos < shuffleHistory.length - 1) {
-      shuffleHistoryPos++
-      playSong(shuffleHistory[shuffleHistoryPos])
-      return
-    }
-
-    // Need a new song from the queue
+    if (shuffleHistoryPos < shuffleHistory.length - 1) { shuffleHistoryPos++; playSong(shuffleHistory[shuffleHistoryPos]); return }
     if (shuffleQueue.length === 0) {
       if (repeatMode === 'none') { stopPlayback(); return }
-      // Refill queue for repeat all, excluding current
       shuffleQueue = buildShuffleQueue(tracks.length, currentTrackIndex)
     }
-
     const next = shuffleQueue.shift()
-    shuffleHistory.push(next)
-    shuffleHistoryPos = shuffleHistory.length - 1
+    shuffleHistory.push(next); shuffleHistoryPos = shuffleHistory.length - 1
     playSong(next)
   } else {
     const next = (currentTrackIndex + 1) % tracks.length
@@ -544,19 +704,10 @@ function prevSong() {
   if (!currentPlaylist) return
   const tracks = playlists[currentPlaylist]
   if (!tracks?.length) return
-
-  // If more than 3 seconds in, restart current song
   if (currentSound && currentSound.seek() > 3) { currentSound.seek(0); return }
-
   if (isShuffle) {
-    // Go back through shuffle history
-    if (shuffleHistoryPos > 0) {
-      shuffleHistoryPos--
-      playSong(shuffleHistory[shuffleHistoryPos])
-    } else {
-      // Already at the start of history — restart current
-      if (currentSound) currentSound.seek(0)
-    }
+    if (shuffleHistoryPos > 0) { shuffleHistoryPos--; playSong(shuffleHistory[shuffleHistoryPos]) }
+    else { if (currentSound) currentSound.seek(0) }
   } else {
     playSong((currentTrackIndex - 1 + tracks.length) % tracks.length)
   }
@@ -575,13 +726,8 @@ function toggleShuffle() {
   btn.classList.toggle('active', isShuffle)
   btn.style.transform = 'scale(0.9)'
   setTimeout(() => { btn.style.transform = '' }, 200)
-
-  if (isShuffle) {
-    // Seed shuffle state with current track
-    initShuffleState(currentTrackIndex)
-  } else {
-    resetShuffleState()
-  }
+  if (isShuffle) initShuffleState(currentTrackIndex)
+  else resetShuffleState()
 }
 
 function toggleRepeat() {
@@ -600,12 +746,10 @@ function likeSong() {
   setTimeout(() => btn.classList.remove('pop'), 400)
   renderTracks()
 }
-
 function _toggleLikePath(trackPath) {
   likedSongs.has(trackPath) ? likedSongs.delete(trackPath) : likedSongs.add(trackPath)
   syncLikedPlaylist()
 }
-
 function updateLikeBtn() {
   if (!currentPlaylist || currentTrackIndex < 0) return
   const track = playlists[currentPlaylist][currentTrackIndex]
@@ -619,47 +763,26 @@ function updateLikeBtn() {
 // ── Keyboard shortcuts ────────────────────────────────────
 document.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
-
   switch (e.code) {
-    case 'Space':
-      e.preventDefault()
-      togglePlay()
-      break
-    case 'MediaPlayPause':
-      e.preventDefault()
-      togglePlay()
-      break
-    case 'MediaNextTrack':
-      e.preventDefault()
-      nextSong()
-      break
-    case 'MediaPreviousTrack':
-      e.preventDefault()
-      prevSong()
-      break
-    case 'MediaStop':
-      e.preventDefault()
-      stopPlayback()
-      break
-    case 'ArrowRight':
-      if (e.altKey || e.metaKey) { e.preventDefault(); nextSong() }
-      break
-    case 'ArrowLeft':
-      if (e.altKey || e.metaKey) { e.preventDefault(); prevSong() }
-      break
+    case 'Space':       e.preventDefault(); togglePlay(); break
+    case 'MediaPlayPause': e.preventDefault(); togglePlay(); break
+    case 'MediaNextTrack': e.preventDefault(); nextSong(); break
+    case 'MediaPreviousTrack': e.preventDefault(); prevSong(); break
+    case 'MediaStop':   e.preventDefault(); stopPlayback(); break
+    case 'Escape':      if (lyricsVisible) closeLyricsView(); break
+    case 'ArrowRight':  if (e.altKey||e.metaKey) { e.preventDefault(); nextSong() } break
+    case 'ArrowLeft':   if (e.altKey||e.metaKey) { e.preventDefault(); prevSong() } break
     case 'ArrowUp':
-      if (e.altKey || e.metaKey) {
-        e.preventDefault()
-        volume = Math.min(1, volume + 0.05)
+      if (e.altKey||e.metaKey) {
+        e.preventDefault(); volume = Math.min(1, volume + 0.05)
         document.getElementById('volFill').style.height = (volume * 100).toFixed(1) + '%'
         Howler.volume(volume)
         if (currentSound) currentSound.volume(Math.min(1, volume * getTrackVolume(playlists[currentPlaylist]?.[currentTrackIndex] || {})))
       }
       break
     case 'ArrowDown':
-      if (e.altKey || e.metaKey) {
-        e.preventDefault()
-        volume = Math.max(0, volume - 0.05)
+      if (e.altKey||e.metaKey) {
+        e.preventDefault(); volume = Math.max(0, volume - 0.05)
         document.getElementById('volFill').style.height = (volume * 100).toFixed(1) + '%'
         Howler.volume(volume)
         if (currentSound) currentSound.volume(Math.min(1, volume * getTrackVolume(playlists[currentPlaylist]?.[currentTrackIndex] || {})))
@@ -685,21 +808,18 @@ async function addFolder() {
     try {
       const meta = await mm.parseFile(filePath, { duration: true, skipCovers: false })
       const tags = meta.common
-      if (tags.title)         track.title    = tags.title
-      if (tags.artist)        track.artist   = tags.artist
-      if (tags.album)         track.album    = tags.album
-      if (tags.genre?.length) track.genre    = tags.genre[0]
+      if (tags.title) track.title = tags.title
+      if (tags.artist) track.artist = tags.artist
+      if (tags.album) track.album = tags.album
+      if (tags.genre?.length) track.genre = tags.genre[0]
       if (meta.format.duration) track.duration = meta.format.duration
       const pic = tags.picture?.[0]
       if (pic) { const blob = new Blob([pic.data], { type: pic.format }); track.coverUrl = URL.createObjectURL(blob) }
-      if (tags.replaygain_track_gain?.dB) {
-        track.replayGain = tags.replaygain_track_gain.dB
-      }
+      if (tags.replaygain_track_gain?.dB) track.replayGain = tags.replaygain_track_gain.dB
     } catch (e) { console.warn(`Skipped metadata for ${file}:`, e.message) }
     tracks.push(track)
   }
   playlists[folderName] = tracks
-  // Reset shuffle state when a new playlist is loaded
   if (isShuffle) initShuffleState(-1)
   renderPlaylists(); loadPlaylist(folderName); savePlaylists()
 }
@@ -741,7 +861,6 @@ function loadPlaylist(name) {
   document.getElementById('runtime').textContent = totalRuntime(tracks)
   const genres = [...new Set(tracks.map(t => t.genre).filter(Boolean))].slice(0, 3)
   document.getElementById('playlistGenre').textContent = genres.join(' · ')
-  // Reset shuffle state when switching playlists
   if (isShuffle) initShuffleState(currentTrackIndex >= 0 && currentTrackIndex < tracks.length ? currentTrackIndex : -1)
   renderTracks(); renderPlaylists()
 }
@@ -777,15 +896,17 @@ function renderTracks() {
 
   list.innerHTML = ''
 
-  filtered.forEach(({ track, playlistName, originalIndex }, displayIndex) => {
+  filtered.forEach(({ track, playlistName, originalIndex }) => {
     const isActive = playlistName === currentPlaylist && originalIndex === currentTrackIndex
     const liked = likedSongs.has(track.path)
+    const scribes = hasScribe(track.path)
 
     const div = document.createElement('div')
     div.className = 'track-row' + (isActive ? ' playing' : '')
     div.dataset.playlist = playlistName
     div.dataset.index = originalIndex
     div.ondblclick = () => playSong(originalIndex, playlistName)
+    div.oncontextmenu = (e) => showTrackCtxMenu(e, track, playlistName, originalIndex)
 
     const artCell = track.coverUrl
       ? `<img src="${track.coverUrl}" alt="">`
@@ -799,10 +920,6 @@ function renderTracks() {
     } else {
       numCell = `<span class="track-num-label">${originalIndex + 1}</span>`
     }
-
-    const albumCell = isOverall
-      ? `<span class="t-source-badge">${escHtml(playlistName)}</span>`
-      : `<div class="t-album" title="${escHtml(track.album)}">${highlight(track.album || '', q)}</div>`
 
     const titleHtml  = highlight(track.title  || 'Unknown', q)
     const artistHtml = highlight(track.artist || 'Unknown Artist', q)
@@ -846,13 +963,9 @@ function renderTracks() {
       if (playlistName === currentPlaylist && originalIndex === currentTrackIndex) {
         togglePlay()
       } else {
-        // When manually picking a song in shuffle mode, update shuffle history
         if (isShuffle) {
-          // Truncate forward history and push new pick
           shuffleHistory = shuffleHistory.slice(0, shuffleHistoryPos + 1)
-          shuffleHistory.push(originalIndex)
-          shuffleHistoryPos = shuffleHistory.length - 1
-          // Remove this index from the queue if present
+          shuffleHistory.push(originalIndex); shuffleHistoryPos = shuffleHistory.length - 1
           const qi = shuffleQueue.indexOf(originalIndex)
           if (qi !== -1) shuffleQueue.splice(qi, 1)
         }
@@ -879,7 +992,7 @@ function toggleLike(e, trackPath) {
   renderTracks(); updateLikeBtn()
 }
 
-// ── Context menu ──────────────────────────────────────────
+// ── Playlist context menu ─────────────────────────────────
 function showPlaylistCtxMenu(e, name) {
   e.preventDefault()
   const menu = document.getElementById('ctxMenu')
@@ -908,8 +1021,7 @@ function deletePlaylist(name) {
   if (!playlists[name]) return
   delete playlists[name]; delete playlistCovers[name]
   if (currentPlaylist === name) {
-    currentPlaylist = null; stopPlayback()
-    resetShuffleState()
+    currentPlaylist = null; stopPlayback(); resetShuffleState()
     document.getElementById('playlistTitle').textContent = 'Select a playlist'
     document.getElementById('songCount').textContent = '0 songs'
     document.getElementById('runtime').textContent = '—'
@@ -934,11 +1046,8 @@ function openEditModal(name) {
     : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>`
   document.getElementById('editModal').style.display = 'flex'
 }
-
 function closeModal() { document.getElementById('editModal').style.display = 'none'; editingPlaylist = null; pendingCoverDataUrl = null }
-
 function pickCover() { document.getElementById('coverFilePicker').click() }
-
 function onCoverPicked(e) {
   const file = e.target.files[0]; if (!file) return
   const reader = new FileReader()
@@ -948,7 +1057,6 @@ function onCoverPicked(e) {
   }
   reader.readAsDataURL(file); e.target.value = ''
 }
-
 function savePlaylistEdit() {
   if (!editingPlaylist) return
   const newName = document.getElementById('modalNameInput').value.trim()
@@ -1003,10 +1111,7 @@ document.getElementById('searchInput').addEventListener('input', onSearchInput)
 // ── Window controls ───────────────────────────────────────
 function minimizeWindow() { require('@electron/remote').getCurrentWindow().minimize() }
 function maximizeWindow() { const w = require('@electron/remote').getCurrentWindow(); w.isMaximized() ? w.unmaximize() : w.maximize() }
-function closeWindow() {
-  saveSession()
-  require('@electron/remote').getCurrentWindow().close()
-}
+function closeWindow() { saveSession(); require('@electron/remote').getCurrentWindow().close() }
 
 // ── Init ──────────────────────────────────────────────────
 loadPlaylists()
