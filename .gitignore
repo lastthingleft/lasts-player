@@ -1,2 +1,5 @@
 node_modules/
 dist/
+*.exe
+*.zip
+*.7z
