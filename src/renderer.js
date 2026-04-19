@@ -483,7 +483,16 @@ function renderLyricsLines(cues) {
     const div = document.createElement('div')
     div.className = 'lyric-line'
     div.dataset.index = i
+    div.dataset.start = cue.start
     div.textContent = cue.text
+    div.addEventListener('click', () => {
+      if (currentSound) {
+        currentSound.seek(cue.start)
+        // Immediately highlight this line without waiting for the interval
+        currentLyricIndex = i
+        highlightLyric(i)
+      }
+    })
     container.appendChild(div)
   })
 }
@@ -491,21 +500,24 @@ function renderLyricsLines(cues) {
 function startLyricsSync(cues) {
   stopLyricsSync()
   currentLyricIndex = -1
+  // Poll at 50ms; apply a small lookahead so the highlight lands on the beat
+  const LOOKAHEAD = 0.08  // seconds — fires 80ms early to account for animation delay
   lyricsSyncInterval = setInterval(() => {
     if (!currentSound || !lyricsVisible) return
     const seek = currentSound.seek()
     if (typeof seek !== 'number') return
 
+    const t = seek + LOOKAHEAD
     let active = -1
     for (let i = 0; i < cues.length; i++) {
-      if (seek >= cues[i].start && seek < cues[i].end) { active = i; break }
+      if (t >= cues[i].start && t < cues[i].end) { active = i; break }
     }
 
     if (active !== currentLyricIndex) {
       currentLyricIndex = active
       highlightLyric(active)
     }
-  }, 100)
+  }, 50)
 }
 
 function stopLyricsSync() {

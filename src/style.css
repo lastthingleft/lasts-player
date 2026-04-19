@@ -998,10 +998,6 @@ mark.sh {
    SCRIBE ADDITIONS — append these to the bottom of style.css
    ═══════════════════════════════════════════════════════════ */
 
-/* ═══════════════════════════════════════════════════════════
-   SCRIBE ADDITIONS — append these to the bottom of style.css
-   ═══════════════════════════════════════════════════════════ */
-
 /* ── Right content area (wraps tracklist + lyrics) ───────── */
 .right-content-area {
   flex: 1;
@@ -1125,14 +1121,24 @@ mark.sh {
   font-weight: 600;
   line-height: 1.45;
   color: rgba(255,255,255,0.22);
-  cursor: default;
+  cursor: pointer;
   padding: 6px 0;
-  transition: color 0.35s var(--ease-out),
-              transform 0.4s var(--ease-spring),
-              font-size 0.3s var(--ease-out);
+  transition: color 0.3s var(--ease-out),
+              transform 0.35s var(--ease-spring),
+              font-size 0.3s var(--ease-out),
+              text-decoration-color 0.25s var(--ease-out);
   transform: scale(0.97);
   transform-origin: left center;
   white-space: pre-wrap;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 4px;
+  user-select: none;
+}
+
+.lyric-line:hover {
+  color: rgba(255,255,255,0.55);
+  text-decoration-color: rgba(255,255,255,0.3);
 }
 
 /* Past lines — slightly brighter than inactive */
@@ -1140,11 +1146,21 @@ mark.sh {
   color: rgba(255,255,255,0.32);
 }
 
+.lyric-line.lyric-past:hover {
+  color: rgba(255,255,255,0.6);
+  text-decoration-color: rgba(255,255,255,0.35);
+}
+
 /* Active (currently playing) line */
 .lyric-line.lyric-active {
   color: #ffffff;
   font-size: 26px;
   transform: scale(1);
+}
+
+.lyric-line.lyric-active:hover {
+  color: #ffffff;
+  text-decoration-color: rgba(255,255,255,0.5);
 }
 
 /* ── Scribe Editor Backdrop ──────────────────────────────── */
