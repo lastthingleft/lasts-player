@@ -33,7 +33,7 @@ let filterQuery = ''
 let filterOverall = false
 
 // ── Scribe State ──────────────────────────────────────────
-let scribeData = {}           // { [trackPath]: [{ start, end, text }] }
+let scribeData = {}
 let lyricsVisible = false
 let lyricsSyncInterval = null
 let currentLyricIndex = -1
@@ -43,7 +43,6 @@ if (!fs.existsSync(SCRIBE_DIR)) fs.mkdirSync(SCRIBE_DIR, { recursive: true })
 
 // ── SRT helpers ───────────────────────────────────────────
 function srtTimeToSeconds(t) {
-  // HH:MM:SS,mmm
   const m = t.match(/(\d+):(\d+):(\d+)[,.](\d+)/)
   if (!m) return 0
   return parseInt(m[1]) * 3600 + parseInt(m[2]) * 60 + parseInt(m[3]) + parseInt(m[4]) / 1000
@@ -55,7 +54,6 @@ function parseSRT(raw) {
   for (const block of blocks) {
     const lines = block.trim().split('\n')
     if (lines.length < 3) continue
-    // lines[0] = index, lines[1] = timecodes, lines[2+] = text
     const tc = lines[1].match(/(\S+)\s*-->\s*(\S+)/)
     if (!tc) continue
     cues.push({
@@ -68,7 +66,6 @@ function parseSRT(raw) {
 }
 
 function scribeKeyFor(trackPath) {
-  // Use a sanitised filename as the key
   return path.join(SCRIBE_DIR, Buffer.from(trackPath).toString('base64').replace(/[/+=]/g, '_') + '.srt')
 }
 
@@ -76,8 +73,7 @@ function loadScribeForTrack(trackPath) {
   const file = scribeKeyFor(trackPath)
   if (!fs.existsSync(file)) return null
   try {
-    const raw = fs.readFileSync(file, 'utf8')
-    return parseSRT(raw)
+    return parseSRT(fs.readFileSync(file, 'utf8'))
   } catch (e) { return null }
 }
 
@@ -131,7 +127,8 @@ function savePlaylists() {
     for (const [name, tracks] of Object.entries(playlists)) {
       serialisable[name] = tracks.map(t => ({
         title: t.title, artist: t.artist, album: t.album,
-        genre: t.genre, duration: t.duration, path: t.path, replayGain: t.replayGain
+        genre: t.genre, duration: t.duration, path: t.path, replayGain: t.replayGain,
+        year: t.year
       }))
     }
     fs.writeFileSync(DATA_PATH, JSON.stringify({ playlists: serialisable, likedSongs: [...likedSongs], playlistCovers }, null, 2), 'utf8')
@@ -425,13 +422,9 @@ function openLyricsView() {
   const trackList   = document.getElementById('trackList')
   const trackHeader = document.querySelector('.track-header')
 
-  // Build lyrics lines
   renderLyricsLines(cues)
-
-  // Set background tint from cover
   setLyricsBg(track)
 
-  // Animate: tracklist slides down, lyrics slides up
   lyricsPanel.style.display = 'flex'
   requestAnimationFrame(() => {
     lyricsPanel.classList.add('lyrics-visible')
@@ -439,11 +432,9 @@ function openLyricsView() {
     if (trackHeader) trackHeader.classList.add('tracklist-hidden')
   })
 
-  // Update mic button icon
   const btn = document.getElementById('scribeBtn')
   if (btn) btn.classList.add('lyrics-open')
 
-  // Start sync
   startLyricsSync(cues)
 }
 
@@ -472,7 +463,6 @@ function toggleLyricsView() {
 
 function setLyricsBg(track) {
   const panel = document.getElementById('lyricsPanel')
-  // Default dark theme bg — always use the app's dark palette
   panel.style.background = 'linear-gradient(180deg, #1a1d24 0%, #13161b 100%)'
 }
 
@@ -488,7 +478,6 @@ function renderLyricsLines(cues) {
     div.addEventListener('click', () => {
       if (currentSound) {
         currentSound.seek(cue.start)
-        // Immediately highlight this line without waiting for the interval
         currentLyricIndex = i
         highlightLyric(i)
       }
@@ -500,8 +489,7 @@ function renderLyricsLines(cues) {
 function startLyricsSync(cues) {
   stopLyricsSync()
   currentLyricIndex = -1
-  // Poll at 50ms; apply a small lookahead so the highlight lands on the beat
-  const LOOKAHEAD = 0.08  // seconds — fires 80ms early to account for animation delay
+  const LOOKAHEAD = 0.08
   lyricsSyncInterval = setInterval(() => {
     if (!currentSound || !lyricsVisible) return
     const seek = currentSound.seek()
@@ -533,19 +521,17 @@ function highlightLyric(index) {
     line.classList.toggle('lyric-active', i === index)
     line.classList.toggle('lyric-past', i < index)
   })
-  // Scroll active line into view smoothly
   if (index >= 0 && lines[index]) {
     lines[index].scrollIntoView({ behavior: 'smooth', block: 'center' })
   }
 }
 
 // ── Scribe Editor ─────────────────────────────────────────
-let scribeEditTarget = null  // { track, playlistName, originalIndex }
+let scribeEditTarget = null
 
 function openScribeEditor(trackPath, trackTitle) {
   scribeEditTarget = trackPath
 
-  // Load existing SRT if present
   const existing = (() => {
     const file = scribeKeyFor(trackPath)
     if (fs.existsSync(file)) return fs.readFileSync(file, 'utf8')
@@ -580,8 +566,256 @@ function saveScribe() {
   closeScribeEditor()
 }
 
-// ── Track context menu (with Scribe option) ───────────────
-let _ctxMenuTrack = null  // holds track ref so onclick doesn't need path in HTML
+// ── Metadata Editor ───────────────────────────────────────
+let _metaTrack = null
+let _metaPlaylistName = null
+let _metaOriginalIndex = null
+let _metaPendingCoverDataUrl = null
+let _metaPendingCoverBuffer = null
+
+function openMetadataEditor(track, playlistName, originalIndex) {
+  _metaTrack = track
+  _metaPlaylistName = playlistName
+  _metaOriginalIndex = originalIndex
+  _metaPendingCoverDataUrl = null
+  _metaPendingCoverBuffer = null
+
+  document.getElementById('metaTitleInput').value  = track.title  || ''
+  document.getElementById('metaArtistInput').value = track.artist || ''
+  document.getElementById('metaYearInput').value   = track.year   || ''
+  document.getElementById('metaGenreInput').value  = track.genre  || ''
+
+  const preview = document.getElementById('metaCoverPreview')
+  if (track.coverUrl) {
+    preview.innerHTML = `<img src="${track.coverUrl}" alt="cover">`
+  } else {
+    preview.innerHTML = `<div class="meta-cover-placeholder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg><span>Click to set cover</span></div>`
+  }
+
+  const backdrop = document.getElementById('metaEditorBackdrop')
+  backdrop.style.display = 'flex'
+  requestAnimationFrame(() => backdrop.classList.add('meta-editor-visible'))
+}
+
+function closeMetadataEditor() {
+  const backdrop = document.getElementById('metaEditorBackdrop')
+  backdrop.classList.remove('meta-editor-visible')
+  setTimeout(() => { backdrop.style.display = 'none' }, 350)
+  _metaTrack = null
+  _metaPendingCoverDataUrl = null
+  _metaPendingCoverBuffer = null
+}
+
+function metaPickCover() {
+  document.getElementById('metaCoverFilePicker').click()
+}
+
+function onMetaCoverPicked(e) {
+  const file = e.target.files[0]
+  if (!file) return
+  const reader = new FileReader()
+  reader.onload = ev => {
+    _metaPendingCoverDataUrl = ev.target.result
+    document.getElementById('metaCoverPreview').innerHTML = `<img src="${_metaPendingCoverDataUrl}" alt="cover">`
+  }
+  reader.readAsDataURL(file)
+
+  const bufReader = new FileReader()
+  bufReader.onload = ev2 => {
+    _metaPendingCoverBuffer = { data: Buffer.from(ev2.target.result), mime: file.type }
+  }
+  bufReader.readAsArrayBuffer(file)
+
+  e.target.value = ''
+}
+
+// ── Cover context menu (right-click on cover area) ────────
+function showMetaCoverCtxMenu(e) {
+  e.preventDefault()
+  e.stopPropagation()
+  const menu = document.getElementById('metaCoverCtxMenu')
+  menu.style.display = 'block'
+  // Position relative to viewport, ensure it doesn't overflow
+  const menuW = 170, menuH = 50
+  const x = Math.min(e.clientX, window.innerWidth - menuW)
+  const y = Math.min(e.clientY, window.innerHeight - menuH)
+  menu.style.left = x + 'px'
+  menu.style.top  = y + 'px'
+}
+
+async function metaPasteCover() {
+  document.getElementById('metaCoverCtxMenu').style.display = 'none'
+  try {
+    const items = await navigator.clipboard.read()
+    for (const item of items) {
+      const imageType = item.types.find(t => t.startsWith('image/'))
+      if (imageType) {
+        const blob = await item.getType(imageType)
+        const arrayBuffer = await blob.arrayBuffer()
+        _metaPendingCoverBuffer = { data: Buffer.from(arrayBuffer), mime: imageType }
+        const dataUrl = await new Promise(res => {
+          const fr = new FileReader()
+          fr.onload = e => res(e.target.result)
+          fr.readAsDataURL(blob)
+        })
+        _metaPendingCoverDataUrl = dataUrl
+        document.getElementById('metaCoverPreview').innerHTML = `<img src="${dataUrl}" alt="cover">`
+        return
+      }
+    }
+    console.warn('No image found in clipboard')
+  } catch (err) { console.error('Clipboard read failed:', err) }
+}
+
+// Close context menus on any click outside
+document.addEventListener('click', e => {
+  const ctxMenu = document.getElementById('ctxMenu')
+  const coverMenu = document.getElementById('metaCoverCtxMenu')
+  if (ctxMenu && !ctxMenu.contains(e.target)) ctxMenu.style.display = 'none'
+  if (coverMenu && !coverMenu.contains(e.target)) coverMenu.style.display = 'none'
+})
+
+async function saveMetadata() {
+  if (!_metaTrack) return
+
+  const saveBtn = document.querySelector('#metaEditorBackdrop .modal-btn.primary')
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving…' }
+
+  const newTitle  = document.getElementById('metaTitleInput').value.trim()
+  const newArtist = document.getElementById('metaArtistInput').value.trim()
+  const newYear   = document.getElementById('metaYearInput').value.trim()
+  const newGenre  = document.getElementById('metaGenreInput').value.trim()
+
+  const wasPlaying = isPlaying && currentPlaylist === _metaPlaylistName && currentTrackIndex === _metaOriginalIndex
+  const seekPos = wasPlaying && currentSound ? currentSound.seek() : 0
+  if (wasPlaying && currentSound) currentSound.pause()
+
+  await writeTagsWithFfmpeg(_metaTrack.path, {
+    title: newTitle, artist: newArtist, year: newYear, genre: newGenre
+  }, _metaPendingCoverBuffer || null)
+
+  // Re-read the cover art from the newly written file so it's accurate
+  let newCoverUrl = _metaPendingCoverDataUrl || _metaTrack.coverUrl
+  if (_metaPendingCoverBuffer) {
+    // We wrote a new cover — use the pending data URL
+    newCoverUrl = _metaPendingCoverDataUrl
+  }
+
+  // Update every in-memory reference to this track
+  for (const tracks of Object.values(playlists)) {
+    for (const t of tracks) {
+      if (t.path !== _metaTrack.path) continue
+      if (newTitle)  t.title  = newTitle
+      if (newArtist) t.artist = newArtist
+      if (newYear)   t.year   = newYear
+      if (newGenre)  t.genre  = newGenre
+      if (newCoverUrl) t.coverUrl = newCoverUrl
+    }
+  }
+
+  savePlaylists()
+  renderTracks()
+  if (currentPlaylist === _metaPlaylistName && currentTrackIndex === _metaOriginalIndex) {
+    updateNowPlayingUI(_metaTrack)
+    animateSongSwitch(_metaTrack)
+    if (wasPlaying && currentSound) { currentSound.seek(seekPos); currentSound.play() }
+  }
+
+  if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save' }
+  closeMetadataEditor()
+}
+
+// ── ffmpeg tag writer ─────────────────────────────────────
+// Writes title, artist, year (date), genre, and optionally embedded cover art.
+// Formats that don't support embedded cover art (wav, ogg, wma) silently skip
+// the cover — metadata tags are still written for all formats.
+async function writeTagsWithFfmpeg(filePath, tags, coverBuf) {
+  const os  = require('os')
+  const ext = path.extname(filePath).toLowerCase()
+  const tmp = path.join(os.tmpdir(), `lp_meta_${Date.now()}${ext}`)
+  let coverTmp = null
+
+  // These containers cannot embed cover art — skip it silently
+  const NO_COVER_EXTS = new Set(['.wav', '.ogg', '.wma', '.aiff', '.aif', '.pcm'])
+  const canEmbedCover = coverBuf && !NO_COVER_EXTS.has(ext)
+
+  return new Promise((resolve) => {
+    let stderrLog = ''
+    const args = ['-y', '-i', filePath]
+
+    if (canEmbedCover) {
+      coverTmp = path.join(os.tmpdir(), `lp_cover_${Date.now()}.jpg`)
+      fs.writeFileSync(coverTmp, coverBuf.data)
+      args.push('-i', coverTmp)
+    }
+
+    // ── Stream mapping + codec (must come before -metadata) ──
+    if (canEmbedCover) {
+      if (ext === '.mp3') {
+        args.push(
+          '-map', '0:a',
+          '-map', '1:v',
+          '-c:a', 'copy',
+          '-c:v', 'mjpeg',
+          '-metadata:s:v', 'title=Album cover',
+          '-metadata:s:v', 'comment=Cover (front)'
+        )
+      } else if (ext === '.flac') {
+        args.push('-map', '0:a', '-map', '1:v', '-c', 'copy')
+      } else if (ext === '.m4a' || ext === '.aac') {
+        args.push('-map', '0:a', '-map', '1:v', '-c', 'copy', '-disposition:v:0', 'attached_pic')
+      } else {
+        // Generic fallback for any other container that supports video streams
+        args.push('-map', '0:a', '-map', '1:v', '-c', 'copy')
+      }
+    } else {
+      // No cover (or format doesn't support it) — preserve existing streams only
+      args.push('-map', '0', '-c', 'copy')
+    }
+
+    // ── Metadata flags (MUST come after stream mapping) ───────
+    if (newTitle(tags))  args.push('-metadata', `title=${tags.title}`)
+    if (newArtist(tags)) args.push('-metadata', `artist=${tags.artist}`)
+    if (newYear(tags))   args.push('-metadata', `date=${tags.year}`)   // 'date' is the ffmpeg key for year
+    if (newGenre(tags))  args.push('-metadata', `genre=${tags.genre}`)
+
+    // For MP3: force ID3v2.3 tags so Windows Media Player reads them correctly
+    if (ext === '.mp3') {
+      args.push('-id3v2_version', '3', '-write_id3v1', '1')
+    }
+
+    args.push(tmp)
+
+    const { spawn } = require('child_process')
+    const ffmpegPath = require('ffmpeg-static')
+    const proc = spawn(ffmpegPath, args)
+
+    proc.stderr.on('data', d => { stderrLog += d.toString() })
+    proc.on('close', (code) => {
+      try {
+        if (code === 0 && fs.existsSync(tmp)) {
+          fs.copyFileSync(tmp, filePath)
+        } else {
+          console.error('ffmpeg failed (code', code, ')\n', stderrLog)
+        }
+      } catch (e) { console.error('File replace failed:', e) }
+      finally {
+        try { fs.unlinkSync(tmp) } catch (_) {}
+        if (coverTmp) try { fs.unlinkSync(coverTmp) } catch (_) {}
+        resolve()
+      }
+    })
+  })
+}
+
+function newTitle(tags)  { return tags.title  && tags.title.trim()  !== '' }
+function newArtist(tags) { return tags.artist && tags.artist.trim() !== '' }
+function newYear(tags)   { return tags.year   && tags.year.trim()   !== '' }
+function newGenre(tags)  { return tags.genre  && tags.genre.trim()  !== '' }
+
+
+// ── Track context menu ────────────────────────────────────
+let _ctxMenuTrack = null
 
 function showTrackCtxMenu(e, track, playlistName, originalIndex) {
   e.preventDefault()
@@ -597,16 +831,35 @@ function showTrackCtxMenu(e, track, playlistName, originalIndex) {
       </svg>
       ${scribes ? 'Edit Scribe' : 'Scribe'}
     </div>
+    <div class="ctx-item" id="ctxMetaItem">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+      </svg>
+      Edit Metadata
+    </div>
   `
   document.getElementById('ctxScribeItem').addEventListener('click', () => {
     menu.style.display = 'none'
     if (_ctxMenuTrack) openScribeEditor(_ctxMenuTrack.path, _ctxMenuTrack.title || 'Unknown')
+  })
+  document.getElementById('ctxMetaItem').addEventListener('click', () => {
+    menu.style.display = 'none'
+    if (_ctxMenuTrack) openMetadataEditor(_ctxMenuTrack, playlistName, originalIndex)
   })
   menu.style.display = 'block'
   const x = Math.min(e.clientX, window.innerWidth - 180)
   const y = Math.min(e.clientY, window.innerHeight - 80)
   menu.style.left = x + 'px'
   menu.style.top = y + 'px'
+}
+
+// ── Settings cogwheel → opens metadata editor for current track ──
+function openSettingsMenu(e) {
+  if (!currentPlaylist || currentTrackIndex < 0) return
+  const track = playlists[currentPlaylist]?.[currentTrackIndex]
+  if (!track) return
+  openMetadataEditor(track, currentPlaylist, currentTrackIndex)
 }
 
 // ── Playback ──────────────────────────────────────────────
@@ -623,7 +876,6 @@ function playSong(index, fromPlaylist) {
 
   if (currentSound) { currentSound.stop(); currentSound.unload(); clearInterval(progressInterval) }
 
-  // Close lyrics if open, since new song may not have scribe
   if (lyricsVisible) closeLyricsView()
 
   currentTrackIndex = index
@@ -816,7 +1068,7 @@ async function addFolder() {
   const tracks = []
   for (const file of files) {
     const filePath = path.join(folderPath, file)
-    const track = { title: path.basename(file, path.extname(file)), artist: 'Unknown Artist', album: 'Unknown Album', genre: '', duration: 0, coverUrl: null, path: filePath, replayGain: 0 }
+    const track = { title: path.basename(file, path.extname(file)), artist: 'Unknown Artist', album: 'Unknown Album', genre: '', duration: 0, coverUrl: null, path: filePath, replayGain: 0, year: '' }
     try {
       const meta = await mm.parseFile(filePath, { duration: true, skipCovers: false })
       const tags = meta.common
@@ -825,6 +1077,7 @@ async function addFolder() {
       if (tags.album) track.album = tags.album
       if (tags.genre?.length) track.genre = tags.genre[0]
       if (meta.format.duration) track.duration = meta.format.duration
+      if (tags.year) track.year = String(tags.year)
       const pic = tags.picture?.[0]
       if (pic) { const blob = new Blob([pic.data], { type: pic.format }); track.coverUrl = URL.createObjectURL(blob) }
       if (tags.replaygain_track_gain?.dB) track.replayGain = tags.replaygain_track_gain.dB
@@ -911,7 +1164,6 @@ function renderTracks() {
   filtered.forEach(({ track, playlistName, originalIndex }) => {
     const isActive = playlistName === currentPlaylist && originalIndex === currentTrackIndex
     const liked = likedSongs.has(track.path)
-    const scribes = hasScribe(track.path)
 
     const div = document.createElement('div')
     div.className = 'track-row' + (isActive ? ' playing' : '')
@@ -1025,8 +1277,6 @@ function showPlaylistCtxMenu(e, name) {
   menu.style.left = x + 'px'
   menu.style.top = y + 'px'
 }
-
-document.addEventListener('click', () => { document.getElementById('ctxMenu').style.display = 'none' })
 
 function deletePlaylist(name) {
   document.getElementById('ctxMenu').style.display = 'none'

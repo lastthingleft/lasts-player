@@ -83,6 +83,13 @@
       <!-- Media Controls -->
       <div class="controls-section">
         <div class="ctrl-row-top">
+          <!-- Cogwheel now opens metadata editor for current track -->
+          <button class="c-btn" onclick="openSettingsMenu(event)" title="Edit Track Metadata">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+          </button>
           <button class="c-btn" onclick="prevSong()" title="Previous">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polygon points="19 20 9 12 19 4 19 20"/>
@@ -100,7 +107,7 @@
               <line x1="19" y1="5" x2="19" y2="19"/>
             </svg>
           </button>
-          <!-- Scribe button -->
+          <!-- Scribe / Lyrics button -->
           <button class="c-btn scribe-btn" id="scribeBtn" onclick="toggleLyricsView()" title="No lyrics scribes for this track">
             <svg viewBox="0 0 122.61 122.88" fill="currentColor" stroke="none" width="15" height="15">
               <path fill-rule="evenodd" clip-rule="evenodd" d="M112.67,9.95C106.04,3.32,97.35,0,88.65,0c-8.69,0-17.38,3.32-24.01,9.95c-1.71,1.71-3.2,3.56-4.47,5.51 c0.69,9.51,7.69,20.07,16.83,28.77c9.44,8.97,21.04,15.85,30.4,17.55c0.2,0.04,0.4,0.07,0.6,0.1c1.64-1.14,3.2-2.44,4.66-3.9 c6.63-6.63,9.95-15.32,9.95-24.01C122.61,25.27,119.3,16.58,112.67,9.95L112.67,9.95z M4.72,113.63c-1.49,1.6-2.64,3.42-3.5,5.44 c-1.74,4.07-2.05,4.67,2.05,2.78c2.14-0.99,4.11-2.25,5.86-3.81c1.87,1.74,3.63,2.64,5.66,2.9c2.08,0.27,4.17-0.19,6.82-1.1 c8.65-2.98,38.46-27.36,57.02-42.54c4.76-3.89,8.75-7.16,11.6-9.41c3.55-0.16,7.07-0.88,10.44-2.15 c-9.07-3.33-18.96-9.77-27.24-17.64c-7.65-7.27-13.99-15.81-17.17-24.35c-0.94,2.98-1.45,6.05-1.55,9.14 c-1.95,2.46-4.8,5.98-8.26,10.26C31.32,61.84,4.89,94.47,2.81,101.37c-0.74,2.46-1.15,4.51-0.92,6.52 C2.13,109.95,2.98,111.78,4.72,113.63L4.72,113.63z M82.44,67.35c-2.08,1.69-4.51,3.68-7.17,5.85 C57,88.14,27.67,112.14,19.88,114.82c-1.93,0.66-3.33,1.01-4.42,0.87c-0.95-0.12-1.9-0.7-3.09-1.89l-3.54-3.54 c-1.07-1.07-1.57-2-1.68-2.96c-0.13-1.15,0.18-2.58,0.73-4.4c1.78-5.9,27.78-38.01,42.67-56.4c1.77-2.19,3.39-4.19,4.79-5.91 c1.26,6.37,4.36,12.45,9.3,17.39C69.68,63.02,75.92,66.14,82.44,67.35L82.44,67.35z"/>
@@ -222,7 +229,7 @@
     </div>
   </div>
 
-  <!-- Context Menu -->
+  <!-- Generic Context Menu (track + playlist right-click) -->
   <div id="ctxMenu" class="ctx-menu" style="display:none"></div>
 
   <!-- Edit Playlist Modal -->
@@ -285,6 +292,102 @@
   </div>
 
   <input type="file" id="coverFilePicker" accept="image/*" style="display:none" onchange="onCoverPicked(event)">
+
+  <!-- Metadata Editor -->
+  <div id="metaEditorBackdrop" class="meta-editor-backdrop" style="display:none" onclick="if(event.target===this)closeMetadataEditor()">
+    <div class="meta-editor-modal">
+
+      <div class="meta-editor-header">
+        <div class="meta-editor-title-row">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+          <span>Edit Metadata</span>
+        </div>
+        <button class="scribe-close-btn" onclick="closeMetadataEditor()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="meta-editor-body">
+
+        <!-- Fields column -->
+        <div class="meta-fields">
+          <div class="meta-field">
+            <label>Title</label>
+            <input type="text" id="metaTitleInput" placeholder="Track title…" autocomplete="off" spellcheck="false">
+          </div>
+          <div class="meta-field">
+            <label>Artist</label>
+            <input type="text" id="metaArtistInput" placeholder="Artist name…" autocomplete="off" spellcheck="false">
+          </div>
+          <div class="meta-field meta-field-row">
+            <div class="meta-field" style="flex:1">
+              <label>Year</label>
+              <input type="text" id="metaYearInput" placeholder="2024" maxlength="4" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="meta-field" style="flex:1">
+              <label>Genre</label>
+              <input type="text" id="metaGenreInput" placeholder="Genre…" autocomplete="off" spellcheck="false">
+            </div>
+          </div>
+        </div>
+
+        <!-- Cover column -->
+        <div class="meta-cover-col">
+          <label class="meta-cover-label">Cover</label>
+          <!--
+            Left-click  → open file picker
+            Right-click → show paste context menu
+          -->
+          <div class="meta-cover-preview" id="metaCoverPreview"
+               onclick="metaPickCover()"
+               oncontextmenu="showMetaCoverCtxMenu(event)">
+            <div class="meta-cover-placeholder">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
+                <path d="M9 18V5l12-2v13"/>
+                <circle cx="6" cy="18" r="3"/>
+                <circle cx="18" cy="16" r="3"/>
+              </svg>
+              <span>Click to set cover</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="meta-editor-footer">
+        <button class="modal-btn" onclick="closeMetadataEditor()">Cancel</button>
+        <button class="modal-btn primary" onclick="saveMetadata()">Save</button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Cover right-click context menu -->
+  <div id="metaCoverCtxMenu" class="ctx-menu cover-ctx-menu" style="display:none">
+    <div class="ctx-item" onclick="metaPasteCover()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
+        <rect x="8" y="2" width="8" height="4" rx="1" ry="1"/>
+      </svg>
+      Paste Cover
+    </div>
+    <div class="ctx-item" onclick="metaPickCover(); document.getElementById('metaCoverCtxMenu').style.display='none'">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="17 8 12 3 7 8"/>
+        <line x1="12" y1="3" x2="12" y2="15"/>
+      </svg>
+      Browse File…
+    </div>
+  </div>
+
+  <input type="file" id="metaCoverFilePicker" accept="image/*" style="display:none" onchange="onMetaCoverPicked(event)">
 
   <script src="./node_modules/howler/dist/howler.js"></script>
   <script src="./src/renderer.js"></script>
