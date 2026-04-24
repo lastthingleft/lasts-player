@@ -1,6 +1,6 @@
 {
   "name": "lasts-player",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "description": "Dark music player",
   "main": "./src/main.js",
   "type": "commonjs",
@@ -38,6 +38,7 @@
     "ffmpeg-static": "^5.3.0",
     "howler": "^2.2.4",
     "music-metadata": "^7.14.0",
-    "node-id3": "^0.2.9"
+    "node-id3": "^0.2.9",
+    "yt-dlp-exec": "^1.0.2"
   }
 }

@@ -995,7 +995,7 @@ mark.sh {
 .vol-track:hover .vol-thumb { transform: translateX(-50%) scale(1); }
 
 /* ═══════════════════════════════════════════════════════════
-   SCRIBE ADDITIONS
+   SCRIBE ADDITIONS — append these to the bottom of style.css
    ═══════════════════════════════════════════════════════════ */
 
 /* ── Right content area (wraps tracklist + lyrics) ───────── */
@@ -1017,6 +1017,7 @@ mark.sh {
               transform 0.25s var(--ease-spring);
 }
 
+/* When current track has a scribe */
 .scribe-btn.scribe-active {
   opacity: 1;
   pointer-events: auto !important;
@@ -1027,6 +1028,7 @@ mark.sh {
   color: var(--accent);
 }
 
+/* When lyrics view is open */
 .scribe-btn.lyrics-open {
   color: var(--accent) !important;
   opacity: 1;
@@ -1035,6 +1037,7 @@ mark.sh {
 
 /* ── Tracklist hidden (slides down when lyrics open) ─────── */
 .track-list {
+  /* already has flex:1 and overflow-y:auto — just add transition */
   transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1),
               opacity 0.35s var(--ease-out);
   transform: translateY(0);
@@ -1065,6 +1068,7 @@ mark.sh {
   background: linear-gradient(180deg, #1a1d24 0%, #13161b 100%);
   border-top: 0.5px solid var(--border);
 
+  /* starts offscreen below */
   transform: translateY(100%);
   opacity: 0;
   transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1),
@@ -1110,6 +1114,7 @@ mark.sh {
 }
 .lyrics-lines::-webkit-scrollbar { display: none; }
 
+/* Individual lyric line */
 .lyric-line {
   font-family: 'Poppins', sans-serif;
   font-size: 22px;
@@ -1136,6 +1141,7 @@ mark.sh {
   text-decoration-color: rgba(255,255,255,0.3);
 }
 
+/* Past lines — slightly brighter than inactive */
 .lyric-line.lyric-past {
   color: rgba(255,255,255,0.32);
 }
@@ -1145,6 +1151,7 @@ mark.sh {
   text-decoration-color: rgba(255,255,255,0.35);
 }
 
+/* Active (currently playing) line */
 .lyric-line.lyric-active {
   color: #ffffff;
   font-size: 26px;
@@ -1188,12 +1195,16 @@ mark.sh {
   border: 0.5px solid rgba(255, 255, 255, 0.06);
   box-shadow: 0 32px 80px rgba(0, 0, 0, 0.8),
               0 0 0 0.5px rgba(20, 70, 255, 0.08);
-  background: linear-gradient(
-    145deg,
-    rgba(14, 16, 22, 0.99) 0%,
-    rgba(11, 13, 18, 1) 50%,
-    rgba(8, 9, 14, 1) 100%
-  );
+
+  /* Darker, more desaturated background */
+  background:
+    linear-gradient(
+      145deg,
+      rgba(14, 16, 22, 0.99) 0%,
+      rgba(11, 13, 18, 1) 50%,
+      rgba(8, 9, 14, 1) 100%
+    );
+
   opacity: 0;
   transform: scale(0.93) translateY(24px);
   transition: opacity 0.35s var(--ease-out),
@@ -1205,6 +1216,7 @@ mark.sh {
   transform: scale(1) translateY(0);
 }
 
+/* Subtle accent glow on border */
 .scribe-editor-modal::before {
   content: '';
   position: absolute;
@@ -1343,7 +1355,7 @@ mark.sh {
   align-self: center;
 }
 
-/* ── Metadata Editor Backdrop ────────────────────────────── */
+/* ── Metadata Editor ─────────────────────────────────────── */
 .meta-editor-backdrop {
   position: fixed;
   inset: 0;
@@ -1361,7 +1373,6 @@ mark.sh {
   backdrop-filter: blur(8px);
 }
 
-/* ── Metadata Editor Modal ───────────────────────────────── */
 .meta-editor-modal {
   width: 520px;
   display: flex;
@@ -1449,9 +1460,7 @@ mark.sh {
   font-family: 'Poppins', sans-serif;
   font-size: 12.5px;
   outline: none;
-  transition: border-color 0.2s var(--ease-out),
-              background 0.2s var(--ease-out),
-              box-shadow 0.25s var(--ease-out);
+  transition: border-color 0.2s var(--ease-out), background 0.2s var(--ease-out), box-shadow 0.25s var(--ease-out);
   caret-color: var(--accent);
   width: 100%;
 }
@@ -1503,8 +1512,6 @@ mark.sh {
               background 0.2s var(--ease-out),
               transform 0.25s var(--ease-spring);
   flex-shrink: 0;
-  /* Ensure right-click menu registers on this element */
-  position: relative;
 }
 
 .meta-cover-preview:hover {
@@ -1543,7 +1550,7 @@ mark.sh {
   line-height: 1.3;
 }
 
-/* ── Metadata Editor Footer ──────────────────────────────── */
+/* ── Footer ──────────────────────────────────────────────── */
 .meta-editor-footer {
   display: flex;
   justify-content: flex-end;
@@ -1553,8 +1560,581 @@ mark.sh {
   flex-shrink: 0;
 }
 
-/* ── Cover context menu — must float above the meta modal ── */
-.cover-ctx-menu {
-  /* The meta-editor-backdrop is z-index:10000, so go higher */
-  z-index: 10100 !important;
+/* ── YouTube Import ──────────────────────────────────────── */
+.right-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.yt-import-btn {
+  color: rgba(255,60,60,0.85);
+  border-color: rgba(255,60,60,0.2);
+  background: rgba(255,60,60,0.07);
+}
+.yt-import-btn:hover {
+  color: #ff4444;
+  background: rgba(255,60,60,0.14);
+  border-color: rgba(255,60,60,0.35);
+}
+.yt-import-btn svg { flex-shrink: 0; }
+
+/* Backdrop */
+.yt-import-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0);
+  backdrop-filter: blur(0px);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.3s ease, backdrop-filter 0.3s ease;
+}
+.yt-import-backdrop.yt-import-visible {
+  background: rgba(0,0,0,0.6);
+  backdrop-filter: blur(8px);
+}
+
+/* Modal */
+.yt-import-modal {
+  width: 400px;
+  display: flex;
+  flex-direction: column;
+  border-radius: 13px;
+  overflow: hidden;
+  border: 0.5px solid rgba(255,255,255,0.07);
+  box-shadow: 0 32px 80px rgba(0,0,0,0.8),
+              0 0 0 0.5px rgba(255,60,60,0.1);
+  background: linear-gradient(145deg, rgba(14,16,22,0.99) 0%, rgba(11,13,18,1) 50%, rgba(8,9,14,1) 100%);
+  opacity: 0;
+  transform: scale(0.93) translateY(24px);
+  transition: opacity 0.3s var(--ease-out), transform 0.35s var(--ease-spring);
+}
+.yt-import-backdrop.yt-import-visible .yt-import-modal {
+  opacity: 1;
+  transform: scale(1) translateY(0);
+}
+
+/* Header */
+.yt-import-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 18px 13px;
+  border-bottom: 0.5px solid rgba(255,255,255,0.07);
+  flex-shrink: 0;
+}
+.yt-import-title-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* Body */
+.yt-import-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px 18px 14px;
+}
+.yt-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.yt-field label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text3);
+}
+.yt-input {
+  background: rgba(255,255,255,0.04);
+  border: 0.5px solid rgba(255,255,255,0.09);
+  border-radius: 8px;
+  padding: 9px 12px;
+  color: var(--text);
+  font-family: 'Poppins', sans-serif;
+  font-size: 12.5px;
+  outline: none;
+  width: 100%;
+  transition: border-color 0.2s var(--ease-out),
+              background 0.2s var(--ease-out),
+              box-shadow 0.25s var(--ease-out);
+  caret-color: var(--accent);
+}
+.yt-input:hover { border-color: rgba(255,255,255,0.14); background: rgba(255,255,255,0.06); }
+.yt-input:focus {
+  border-color: rgba(255,60,60,0.45);
+  background: rgba(255,60,60,0.04);
+  box-shadow: 0 0 0 3px rgba(255,60,60,0.08);
+}
+.yt-input::placeholder { color: var(--text3); opacity: 0.6; }
+
+/* Select */
+.yt-select-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.yt-select {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  background: rgba(255,255,255,0.04);
+  border: 0.5px solid rgba(255,255,255,0.09);
+  border-radius: 8px;
+  padding: 9px 36px 9px 12px;
+  color: var(--text);
+  font-family: 'Poppins', sans-serif;
+  font-size: 12.5px;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+}
+.yt-select:hover { border-color: rgba(255,255,255,0.14); background: rgba(255,255,255,0.06); }
+.yt-select:focus { border-color: rgba(255,60,60,0.45); }
+.yt-select option { background: #1a1d24; color: var(--text); }
+.yt-select-arrow {
+  position: absolute;
+  right: 10px;
+  width: 13px;
+  height: 13px;
+  color: var(--text3);
+  pointer-events: none;
+}
+
+/* Progress */
+.yt-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.yt-progress-bar-wrap {
+  height: 3px;
+  background: rgba(255,255,255,0.07);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.yt-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #ff3c3c, #ff6b6b);
+  border-radius: 2px;
+  width: 0%;
+  transition: width 0.4s var(--ease-out);
+}
+.yt-progress-label {
+  font-size: 10.5px;
+  color: var(--text3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Footer */
+.yt-import-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 18px 16px;
+  border-top: 0.5px solid rgba(255,255,255,0.06);
+}
+.yt-import-go-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: linear-gradient(135deg, #cc0000, #ff3c3c) !important;
+}
+.yt-import-go-btn:hover { opacity: 0.88; }
+
+/* ── Import dropdown ─────────────────────────────────────── */
+.import-btn-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.import-main-btn {
+  gap: 6px;
+  user-select: none;
+}
+
+.import-chevron {
+  transition: transform 0.22s var(--ease-spring);
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.import-btn-active .import-chevron {
+  transform: rotate(180deg);
+}
+
+.import-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 210px;
+  background: #10141c;
+  border: 0.5px solid rgba(255,255,255,0.09);
+  border-radius: 11px;
+  padding: 5px;
+  z-index: 9999;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.75), 0 0 0 0.5px rgba(255,255,255,0.04);
+
+  opacity: 0;
+  transform: scale(0.95) translateY(-6px);
+  transform-origin: top right;
+  transition: opacity 0.18s var(--ease-out), transform 0.22s var(--ease-spring);
+  pointer-events: none;
+}
+
+.import-dropdown.import-dropdown-visible {
+  opacity: 1;
+  transform: scale(1) translateY(0);
+  pointer-events: auto;
+}
+
+.import-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background 0.14s, transform 0.15s var(--ease-spring);
+}
+
+.import-dropdown-item:hover {
+  background: rgba(255,255,255,0.06);
+  transform: translateX(2px);
+}
+
+.import-dropdown-item:active {
+  transform: scale(0.98);
+  background: rgba(255,255,255,0.09);
+}
+
+.import-dropdown-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: rgba(255,255,255,0.05);
+  border: 0.5px solid rgba(255,255,255,0.07);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.import-dropdown-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.import-dropdown-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  line-height: 1.3;
+}
+
+.import-dropdown-sub {
+  font-size: 10px;
+  color: var(--text3);
+  line-height: 1.3;
+}
+
+.import-dropdown-divider {
+  height: 0.5px;
+  background: rgba(255,255,255,0.07);
+  margin: 3px 6px;
+}
+
+/* ── File import modal specifics ─────────────────────────── */
+.file-import-pick-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.file-import-name {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: rgba(255,255,255,0.04);
+  border: 0.5px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  padding: 8px 11px;
+  min-width: 0;
+}
+
+.file-import-name.has-file {
+  color: var(--text);
+}
+
+.file-import-browse-btn {
+  flex-shrink: 0;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 0.5px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.06);
+  color: var(--text2);
+  font-family: 'Poppins', sans-serif;
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.18s, color 0.18s, transform 0.15s var(--ease-spring);
+}
+.file-import-browse-btn:hover {
+  background: rgba(255,255,255,0.10);
+  color: var(--text);
+  transform: translateY(-1px);
+}
+.file-import-browse-btn:active { transform: scale(0.97); }
+
+.file-import-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(255, 170, 0, 0.06);
+  border: 0.5px solid rgba(255, 170, 0, 0.18);
+}
+
+.file-import-notice svg {
+  flex-shrink: 0;
+  color: rgba(255, 185, 50, 0.8);
+  margin-top: 1px;
+}
+
+.file-import-notice span {
+  font-size: 11px;
+  color: rgba(255, 200, 80, 0.75);
+  line-height: 1.5;
+}
+
+.file-import-notice strong {
+  color: rgba(255, 200, 80, 0.95);
+  font-weight: 600;
+}
+
+/* ── Context menu additions ───────────────────────────────── */
+.ctx-divider {
+  height: 0.5px;
+  background: rgba(255,255,255,0.07);
+  margin: 3px 6px;
+}
+
+/* "Move To" item with sub-menu */
+.ctx-has-sub {
+  position: relative;
+}
+
+.ctx-submenu {
+  display: none;
+  position: absolute;
+  left: calc(100% + 4px);
+  top: -4px;
+  min-width: 180px;
+  background: #10141c;
+  border: 0.5px solid rgba(255,255,255,0.09);
+  border-radius: 11px;
+  padding: 5px;
+  z-index: 10001;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.75);
+  animation: menuPop 0.18s var(--ease-spring) forwards;
+}
+
+.ctx-has-sub:hover .ctx-submenu {
+  display: block;
+}
+
+.ctx-sub-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text2);
+  transition: background 0.12s, color 0.12s, transform 0.15s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+.ctx-sub-item:hover {
+  background: rgba(255,255,255,0.07);
+  color: var(--text);
+  transform: translateX(2px);
+}
+
+/* ── Delete Confirm Modal ─────────────────────────────────── */
+.delete-confirm-modal {
+  width: 420px;
+  display: flex;
+  flex-direction: column;
+  border-radius: 13px;
+  overflow: hidden;
+  border: 0.5px solid rgba(244, 63, 94, 0.2);
+  box-shadow: 0 32px 80px rgba(0,0,0,0.8),
+              0 0 0 0.5px rgba(244,63,94,0.08);
+  background: linear-gradient(145deg, rgba(14,16,22,0.99) 0%, rgba(11,13,18,1) 50%, rgba(8,9,14,1) 100%);
+  opacity: 0;
+  transform: scale(0.93) translateY(24px);
+  transition: opacity 0.35s var(--ease-out), transform 0.4s var(--ease-spring);
+}
+
+.meta-editor-backdrop.delete-confirm-visible .delete-confirm-modal {
+  opacity: 1;
+  transform: scale(1) translateY(0);
+}
+
+.delete-confirm-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 20px 14px;
+  border-bottom: 0.5px solid rgba(244,63,94,0.12);
+  flex-shrink: 0;
+}
+
+.delete-confirm-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px 20px 14px;
+}
+
+.delete-track-info {
+  background: rgba(255,255,255,0.03);
+  border: 0.5px solid rgba(255,255,255,0.07);
+  border-radius: 9px;
+  padding: 12px 14px;
+}
+
+.delete-track-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.delete-track-artist {
+  font-size: 11.5px;
+  color: var(--text2);
+  margin-top: 2px;
+}
+
+.delete-track-path {
+  font-size: 10px;
+  color: var(--text3);
+  margin-top: 6px;
+  word-break: break-all;
+  font-family: 'JetBrains Mono', 'Consolas', monospace;
+  opacity: 0.7;
+}
+
+.delete-warn-box {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 11px 13px;
+  border-radius: 8px;
+  background: rgba(244,63,94,0.07);
+  border: 0.5px solid rgba(244,63,94,0.2);
+}
+
+.delete-warn-box svg {
+  flex-shrink: 0;
+  color: var(--like);
+  margin-top: 1px;
+}
+
+.delete-warn-box span {
+  font-size: 11.5px;
+  color: rgba(255,160,170,0.85);
+  line-height: 1.5;
+}
+
+.delete-warn-box strong {
+  color: rgba(255,100,120,1);
+  font-weight: 600;
+}
+
+.delete-confirm-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 20px 18px;
+  border-top: 0.5px solid rgba(255,255,255,0.06);
+}
+
+.danger-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(244,63,94,0.12) !important;
+  border-color: rgba(244,63,94,0.3) !important;
+  color: var(--like) !important;
+  font-weight: 600;
+}
+
+.danger-btn:hover {
+  background: rgba(244,63,94,0.22) !important;
+  border-color: rgba(244,63,94,0.5) !important;
+  transform: translateY(-1px) !important;
+}
+
+.danger-btn-final {
+  background: linear-gradient(135deg, #c0213d, #f43f5e) !important;
+  border-color: transparent !important;
+  color: white !important;
+}
+
+.danger-btn-final:hover {
+  opacity: 0.88 !important;
+}
+
+/* Step 2 centered layout */
+.delete-sure-icon {
+  display: flex;
+  justify-content: center;
+  padding-top: 8px;
+}
+
+.delete-sure-text {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  text-align: center;
+  letter-spacing: -0.01em;
+}
+
+.delete-sure-sub {
+  font-size: 12px;
+  color: var(--text2);
+  text-align: center;
+  line-height: 1.55;
+  padding: 0 12px;
+  opacity: 0.8;
+}
+
+#metaCoverCtxMenu {
+  z-index: 10002;
 }

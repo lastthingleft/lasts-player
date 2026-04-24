@@ -83,8 +83,7 @@
       <!-- Media Controls -->
       <div class="controls-section">
         <div class="ctrl-row-top">
-          <!-- Cogwheel now opens metadata editor for current track -->
-          <button class="c-btn" onclick="openSettingsMenu(event)" title="Edit Track Metadata">
+          <button class="c-btn" onclick="openSettingsMenu(event)" title="Settings">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <circle cx="12" cy="12" r="3"/>
               <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
@@ -107,7 +106,7 @@
               <line x1="19" y1="5" x2="19" y2="19"/>
             </svg>
           </button>
-          <!-- Scribe / Lyrics button -->
+          <!-- Scribe button -->
           <button class="c-btn scribe-btn" id="scribeBtn" onclick="toggleLyricsView()" title="No lyrics scribes for this track">
             <svg viewBox="0 0 122.61 122.88" fill="currentColor" stroke="none" width="15" height="15">
               <path fill-rule="evenodd" clip-rule="evenodd" d="M112.67,9.95C106.04,3.32,97.35,0,88.65,0c-8.69,0-17.38,3.32-24.01,9.95c-1.71,1.71-3.2,3.56-4.47,5.51 c0.69,9.51,7.69,20.07,16.83,28.77c9.44,8.97,21.04,15.85,30.4,17.55c0.2,0.04,0.4,0.07,0.6,0.1c1.64-1.14,3.2-2.44,4.66-3.9 c6.63-6.63,9.95-15.32,9.95-24.01C122.61,25.27,119.3,16.58,112.67,9.95L112.67,9.95z M4.72,113.63c-1.49,1.6-2.64,3.42-3.5,5.44 c-1.74,4.07-2.05,4.67,2.05,2.78c2.14-0.99,4.11-2.25,5.86-3.81c1.87,1.74,3.63,2.64,5.66,2.9c2.08,0.27,4.17-0.19,6.82-1.1 c8.65-2.98,38.46-27.36,57.02-42.54c4.76-3.89,8.75-7.16,11.6-9.41c3.55-0.16,7.07-0.88,10.44-2.15 c-9.07-3.33-18.96-9.77-27.24-17.64c-7.65-7.27-13.99-15.81-17.17-24.35c-0.94,2.98-1.45,6.05-1.55,9.14 c-1.95,2.46-4.8,5.98-8.26,10.26C31.32,61.84,4.89,94.47,2.81,101.37c-0.74,2.46-1.15,4.51-0.92,6.52 C2.13,109.95,2.98,111.78,4.72,113.63L4.72,113.63z M82.44,67.35c-2.08,1.69-4.51,3.68-7.17,5.85 C57,88.14,27.67,112.14,19.88,114.82c-1.93,0.66-3.33,1.01-4.42,0.87c-0.95-0.12-1.9-0.7-3.09-1.89l-3.54-3.54 c-1.07-1.07-1.57-2-1.68-2.96c-0.13-1.15,0.18-2.58,0.73-4.4c1.78-5.9,27.78-38.01,42.67-56.4c1.77-2.19,3.39-4.19,4.79-5.91 c1.26,6.37,4.36,12.45,9.3,17.39C69.68,63.02,75.92,66.14,82.44,67.35L82.44,67.35z"/>
@@ -167,6 +166,47 @@
           <div class="playlist-genre" id="playlistGenre"></div>
         </div>
         <div class="right-header-right">
+          <div class="import-btn-wrap" id="importBtnWrap">
+            <button class="add-folder-btn import-main-btn" onclick="toggleImportDropdown(event)" id="importMainBtn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+              Import
+              <svg class="import-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="10" height="10">
+                <polyline points="6 9 12 15 18 9"/>
+              </svg>
+            </button>
+            <div class="import-dropdown" id="importDropdown" style="display:none">
+              <div class="import-dropdown-item" id="importYtItem">
+                <div class="import-dropdown-icon">
+                  <svg viewBox="0 0 24 24" fill="#FF4444" stroke="none" width="13" height="13">
+                    <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
+                  </svg>
+                </div>
+                <div class="import-dropdown-text">
+                  <span class="import-dropdown-label">From YouTube</span>
+                  <span class="import-dropdown-sub">Download via URL</span>
+                </div>
+              </div>
+              <div class="import-dropdown-divider"></div>
+              <div class="import-dropdown-item" id="importFileItem">
+                <div class="import-dropdown-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                    <polyline points="14 2 14 8 20 8"/>
+                    <line x1="12" y1="18" x2="12" y2="12"/>
+                    <line x1="9" y1="15" x2="15" y2="15"/>
+                  </svg>
+                </div>
+                <div class="import-dropdown-text">
+                  <span class="import-dropdown-label">From Files</span>
+                  <span class="import-dropdown-sub">Move a file into a playlist</span>
+                </div>
+              </div>
+            </div>
+          </div>
           <button class="add-folder-btn" onclick="addFolder()">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
@@ -229,7 +269,7 @@
     </div>
   </div>
 
-  <!-- Generic Context Menu (track + playlist right-click) -->
+  <!-- Context Menu -->
   <div id="ctxMenu" class="ctx-menu" style="display:none"></div>
 
   <!-- Edit Playlist Modal -->
@@ -340,10 +380,6 @@
         <!-- Cover column -->
         <div class="meta-cover-col">
           <label class="meta-cover-label">Cover</label>
-          <!--
-            Left-click  → open file picker
-            Right-click → show paste context menu
-          -->
           <div class="meta-cover-preview" id="metaCoverPreview"
                onclick="metaPickCover()"
                oncontextmenu="showMetaCoverCtxMenu(event)">
@@ -369,7 +405,7 @@
   </div>
 
   <!-- Cover right-click context menu -->
-  <div id="metaCoverCtxMenu" class="ctx-menu cover-ctx-menu" style="display:none">
+  <div id="metaCoverCtxMenu" class="ctx-menu" style="display:none">
     <div class="ctx-item" onclick="metaPasteCover()">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
@@ -377,17 +413,237 @@
       </svg>
       Paste Cover
     </div>
-    <div class="ctx-item" onclick="metaPickCover(); document.getElementById('metaCoverCtxMenu').style.display='none'">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-        <polyline points="17 8 12 3 7 8"/>
-        <line x1="12" y1="3" x2="12" y2="15"/>
-      </svg>
-      Browse File…
-    </div>
   </div>
 
   <input type="file" id="metaCoverFilePicker" accept="image/*" style="display:none" onchange="onMetaCoverPicked(event)">
+
+  <!-- YouTube Import Modal -->
+  <div id="ytImportBackdrop" class="yt-import-backdrop" style="display:none" onclick="if(event.target===this)closeYtImport()">
+    <div class="yt-import-modal">
+      <div class="yt-import-header">
+        <div class="yt-import-title-row">
+          <svg viewBox="0 0 24 24" fill="#FF0000" stroke="none" width="16" height="16">
+            <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
+          </svg>
+          <span>Import from YouTube</span>
+        </div>
+        <button class="scribe-close-btn" onclick="closeYtImport()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="yt-import-body">
+        <div class="yt-field">
+          <label>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="11" height="11">
+              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+            </svg>
+            URL
+          </label>
+          <input type="text" id="ytUrlInput" class="yt-input" placeholder="Video URL…" autocomplete="off" spellcheck="false" onkeydown="if(event.key==='Enter')startYtImport()">
+        </div>
+
+        <div class="yt-field">
+          <label>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="11" height="11">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="12" y1="8" x2="12" y2="16"/>
+              <line x1="8" y1="12" x2="16" y2="12"/>
+            </svg>
+            Playlist
+          </label>
+          <div class="yt-select-wrap">
+            <select id="ytPlaylistSelect" class="yt-select">
+              <option value="__default__">Default (lasts-player-downloads)</option>
+            </select>
+            <svg class="yt-select-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <polyline points="6 9 12 15 18 9"/>
+            </svg>
+          </div>
+        </div>
+
+        <!-- Progress area (hidden until import starts) -->
+        <div id="ytProgress" class="yt-progress" style="display:none">
+          <div class="yt-progress-bar-wrap">
+            <div class="yt-progress-bar" id="ytProgressBar"></div>
+          </div>
+          <div class="yt-progress-label" id="ytProgressLabel">Starting…</div>
+        </div>
+      </div>
+
+      <div class="yt-import-footer">
+        <button class="modal-btn" onclick="closeYtImport()">Cancel</button>
+        <button class="modal-btn primary yt-import-go-btn" id="ytImportBtn" onclick="startYtImport()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+          Import
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- From File Import Modal -->
+  <div id="fileImportBackdrop" class="yt-import-backdrop" style="display:none" onclick="if(event.target===this)closeFileImport()">
+    <div class="yt-import-modal">
+      <div class="yt-import-header">
+        <div class="yt-import-title-row">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15" style="color:var(--accent)">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="12" y1="18" x2="12" y2="12"/>
+            <line x1="9" y1="15" x2="15" y2="15"/>
+          </svg>
+          <span>Import from Files</span>
+        </div>
+        <button class="scribe-close-btn" onclick="closeFileImport()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="yt-import-body">
+        <!-- Selected file display -->
+        <div class="yt-field">
+          <label>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="11" height="11">
+              <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/>
+              <polyline points="13 2 13 9 20 9"/>
+            </svg>
+            File
+          </label>
+          <div class="file-import-pick-row">
+            <div class="file-import-name" id="fileImportName">No file selected</div>
+            <button class="file-import-browse-btn" onclick="browseImportFile()">Browse</button>
+          </div>
+        </div>
+
+        <div class="yt-field">
+          <label>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="11" height="11">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+            </svg>
+            Destination Playlist
+          </label>
+          <div class="yt-select-wrap">
+            <select id="fileImportPlaylistSelect" class="yt-select">
+              <option value="__default__">Default (lasts-player-downloads)</option>
+            </select>
+            <svg class="yt-select-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <polyline points="6 9 12 15 18 9"/>
+            </svg>
+          </div>
+        </div>
+
+        <!-- Move notice -->
+        <div class="file-import-notice">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="12" y1="8" x2="12" y2="12"/>
+            <line x1="12" y1="16" x2="12.01" y2="16"/>
+          </svg>
+          <span>The file will be <strong>moved</strong> to the playlist's folder, not copied. Make sure you're okay with that before importing.</span>
+        </div>
+      </div>
+
+      <div class="yt-import-footer">
+        <button class="modal-btn" onclick="closeFileImport()">Cancel</button>
+        <button class="modal-btn primary" id="fileImportBtn" onclick="confirmFileImport()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+          Move & Import
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Delete Confirm Modal -->
+  <div id="deleteConfirmBackdrop" class="meta-editor-backdrop" style="display:none" onclick="if(event.target===this)closeDeleteConfirm()">
+    <div class="delete-confirm-modal">
+
+      <div class="delete-confirm-header">
+        <div class="meta-editor-title-row">
+          <svg viewBox="0 0 24 24" fill="none" stroke="var(--like)" stroke-width="2" width="15" height="15">
+            <polyline points="3 6 5 6 21 6"/>
+            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+            <path d="M10 11v6"/><path d="M14 11v6"/>
+            <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+          </svg>
+          <span style="color:var(--like)">Delete File</span>
+        </div>
+        <button class="scribe-close-btn" onclick="closeDeleteConfirm()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Step 1: Info + first warning -->
+      <div id="deleteStep1" style="display:flex;flex-direction:column">
+        <div class="delete-confirm-body">
+          <div class="delete-track-info">
+            <div class="delete-track-name" id="deleteConfirmName"></div>
+            <div class="delete-track-artist" id="deleteConfirmArtist"></div>
+            <div class="delete-track-path" id="deleteConfirmPath"></div>
+          </div>
+          <div class="delete-warn-box">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+              <line x1="12" y1="9" x2="12" y2="13"/>
+              <line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+            <span>This will <strong>permanently delete</strong> the file from your drive. This cannot be undone.</span>
+          </div>
+        </div>
+        <div class="delete-confirm-footer">
+          <button class="modal-btn" onclick="closeDeleteConfirm()">Cancel</button>
+          <button class="modal-btn danger-btn" onclick="deleteConfirmStep2()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
+              <polyline points="3 6 5 6 21 6"/>
+              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+              <path d="M10 11v6"/><path d="M14 11v6"/>
+            </svg>
+            Delete File
+          </button>
+        </div>
+      </div>
+
+      <!-- Step 2: Final "are you sure" -->
+      <div id="deleteStep2" style="display:none;flex-direction:column">
+        <div class="delete-confirm-body">
+          <div class="delete-sure-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="var(--like)" stroke-width="1.5" width="36" height="36">
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+              <line x1="12" y1="9" x2="12" y2="13"/>
+              <line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+          </div>
+          <div class="delete-sure-text">Are you absolutely sure?</div>
+          <div class="delete-sure-sub">The file will be gone forever. There is no trash — it will be unrecoverable.</div>
+        </div>
+        <div class="delete-confirm-footer">
+          <button class="modal-btn" onclick="closeDeleteConfirm()">No, keep it</button>
+          <button class="modal-btn danger-btn danger-btn-final" onclick="confirmDeleteFile()">
+            Yes, delete forever
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <input type="file" id="fileImportPicker" accept=".mp3,.wav,.flac,.ogg,.m4a,.aac,.wma" style="display:none" onchange="onFileImportPicked(event)">
 
   <script src="./node_modules/howler/dist/howler.js"></script>
   <script src="./src/renderer.js"></script>

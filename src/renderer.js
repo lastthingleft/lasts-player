@@ -11,7 +11,8 @@ const SCRIBE_DIR = path.join(require('@electron/remote').app.getPath('userData')
 // ── State ─────────────────────────────────────────────────
 let playlists = {}
 let playlistCovers = {}
-let currentPlaylist = null
+let currentPlaylist = null      // the playlist that is PLAYING
+let viewedPlaylist = null       // the playlist currently VISIBLE in the right panel
 let currentTrackIndex = -1
 let currentSound = null
 let isPlaying = false
@@ -72,9 +73,7 @@ function scribeKeyFor(trackPath) {
 function loadScribeForTrack(trackPath) {
   const file = scribeKeyFor(trackPath)
   if (!fs.existsSync(file)) return null
-  try {
-    return parseSRT(fs.readFileSync(file, 'utf8'))
-  } catch (e) { return null }
+  try { return parseSRT(fs.readFileSync(file, 'utf8')) } catch (e) { return null }
 }
 
 function saveScribeForTrack(trackPath, rawSRT) {
@@ -85,6 +84,61 @@ function saveScribeForTrack(trackPath, rawSRT) {
 
 function hasScribe(trackPath) {
   return !!scribeData[trackPath] || fs.existsSync(scribeKeyFor(trackPath))
+}
+
+// ── Missing-file cleanup ──────────────────────────────────
+function pruneMissingTracks() {
+  let changed = false
+  for (const name of Object.keys(playlists)) {
+    if (name === LIKED_PLAYLIST) continue
+    const before = playlists[name].length
+    playlists[name] = playlists[name].filter(t => fs.existsSync(t.path))
+    if (playlists[name].length !== before) changed = true
+  }
+  pruneEmptyPlaylists()
+  if (changed) {
+    syncLikedPlaylist()
+    savePlaylists()
+  }
+  return changed
+}
+
+function pruneEmptyPlaylists() {
+  for (const name of Object.keys(playlists)) {
+    if (name === LIKED_PLAYLIST) continue
+    if (playlists[name].length === 0) {
+      delete playlists[name]
+      delete playlistCovers[name]
+      if (currentPlaylist === name) {
+        currentPlaylist = null
+        stopPlayback()
+        resetShuffleState()
+      }
+      if (viewedPlaylist === name) {
+        viewedPlaylist = null
+        document.getElementById('playlistTitle').textContent = 'Select a playlist'
+        document.getElementById('songCount').textContent = '0 songs'
+        document.getElementById('runtime').textContent = '—'
+        document.getElementById('playlistGenre').textContent = ''
+        renderTracks()
+      }
+    }
+  }
+}
+
+function removeTrackFromLibrary(trackPath) {
+  const affected = []
+  for (const [name, tracks] of Object.entries(playlists)) {
+    if (name === LIKED_PLAYLIST) continue
+    const before = tracks.length
+    playlists[name] = tracks.filter(t => t.path !== trackPath)
+    if (playlists[name].length !== before) affected.push(name)
+  }
+  likedSongs.delete(trackPath)
+  pruneEmptyPlaylists()
+  syncLikedPlaylist()
+  savePlaylists()
+  return affected
 }
 
 // ── Mouse tracking ────────────────────────────────────────
@@ -105,7 +159,7 @@ document.addEventListener('mousemove', e => {
 function saveSession() {
   try {
     const seek = (currentSound && currentSound.playing()) ? currentSound.seek() : 0
-    const session = { currentPlaylist, currentTrackIndex, volume, seek: seek || 0 }
+    const session = { currentPlaylist, viewedPlaylist, currentTrackIndex, volume, seek: seek || 0 }
     fs.writeFileSync(SESSION_PATH, JSON.stringify(session, null, 2), 'utf8')
   } catch (e) { console.error('Session save failed:', e) }
 }
@@ -127,8 +181,7 @@ function savePlaylists() {
     for (const [name, tracks] of Object.entries(playlists)) {
       serialisable[name] = tracks.map(t => ({
         title: t.title, artist: t.artist, album: t.album,
-        genre: t.genre, duration: t.duration, path: t.path, replayGain: t.replayGain,
-        year: t.year
+        genre: t.genre, duration: t.duration, path: t.path, replayGain: t.replayGain
       }))
     }
     fs.writeFileSync(DATA_PATH, JSON.stringify({ playlists: serialisable, likedSongs: [...likedSongs], playlistCovers }, null, 2), 'utf8')
@@ -154,20 +207,29 @@ async function loadPlaylists() {
         return track
       }))
     }
+
+    pruneMissingTracks()
     renderPlaylists()
 
     const session = loadSession()
     if (session && session.currentPlaylist && playlists[session.currentPlaylist]) {
-      loadPlaylist(session.currentPlaylist)
+      // Restore viewed playlist (may differ from playing playlist)
+      const sessionViewed = session.viewedPlaylist && playlists[session.viewedPlaylist]
+        ? session.viewedPlaylist
+        : session.currentPlaylist
+      loadPlaylist(sessionViewed)
+
       if (typeof session.volume === 'number') {
         volume = session.volume
         document.getElementById('volFill').style.height = (volume * 100) + '%'
         Howler.volume(volume)
       }
+
       const tracks = playlists[session.currentPlaylist]
       const idx = session.currentTrackIndex
       if (tracks && idx >= 0 && idx < tracks.length) {
         currentTrackIndex = idx
+        currentPlaylist = session.currentPlaylist
         const track = tracks[idx]
         updateNowPlayingUI(track)
         renderTracks()
@@ -195,7 +257,8 @@ async function loadPlaylists() {
         currentSound.load()
       }
     } else if (Object.keys(playlists).length > 0) {
-      loadPlaylist(Object.keys(playlists)[0])
+      const first = Object.keys(playlists)[0]
+      loadPlaylist(first)
     }
   } catch (e) { console.error('Load failed:', e) }
 }
@@ -226,7 +289,7 @@ function randomColor(str) {
   return colors[h]
 }
 function getTrackVolume(track) {
-  if (typeof track.replayGain === 'number') {
+  if (track && typeof track.replayGain === 'number') {
     const gain = track.replayGain
     const linear = Math.pow(10, gain / 20)
     return Math.min(1.0, Math.max(0.05, linear))
@@ -266,8 +329,8 @@ function getFilteredTracks() {
     }
     return results
   }
-  if (!currentPlaylist || !playlists[currentPlaylist]) return []
-  return playlists[currentPlaylist].map((track, i) => ({ track, playlistName: currentPlaylist, originalIndex: i })).filter(({ track }) => trackMatchesQuery(track, q))
+  if (!viewedPlaylist || !playlists[viewedPlaylist]) return []
+  return playlists[viewedPlaylist].map((track, i) => ({ track, playlistName: viewedPlaylist, originalIndex: i })).filter(({ track }) => trackMatchesQuery(track, q))
 }
 
 // ── Search UI handlers ────────────────────────────────────
@@ -290,6 +353,7 @@ function onOverallToggle() {
 
 // ── Song-switch animation ─────────────────────────────────
 function animateSongSwitch(track) {
+  updateMediaSession(track)
   const coverEl = document.getElementById('coverArt')
   coverEl.classList.remove('switching', 'sweep')
   void coverEl.offsetWidth
@@ -321,12 +385,13 @@ function animateSongSwitch(track) {
   updateLikeBtn()
 }
 
-// ── Track-row state update ─────────────────────────────────
+// ── Track-row state update ────────────────────────────────
 function updateTrackRowState() {
   const rows = document.querySelectorAll('.track-row')
   rows.forEach(row => {
     const rowPlaylist = row.dataset.playlist
     const rowIndex = parseInt(row.dataset.index, 10)
+    // Active only when BOTH the playlist AND index match the currently playing track
     const isActive = rowPlaylist === currentPlaylist && rowIndex === currentTrackIndex
     row.classList.toggle('playing', isActive && isPlaying)
     const numDefault = row.querySelector('.num-default')
@@ -369,10 +434,13 @@ function syncLikedPlaylist() {
         document.getElementById('runtime').textContent = '—'
         renderTracks()
       }
+      if (viewedPlaylist === LIKED_PLAYLIST) {
+        viewedPlaylist = null
+      }
     }
   } else { playlists[LIKED_PLAYLIST] = liked }
   renderPlaylists()
-  if (currentPlaylist === LIKED_PLAYLIST) loadPlaylist(LIKED_PLAYLIST)
+  if (viewedPlaylist === LIKED_PLAYLIST) loadPlaylist(LIKED_PLAYLIST)
   savePlaylists()
 }
 
@@ -531,7 +599,6 @@ let scribeEditTarget = null
 
 function openScribeEditor(trackPath, trackTitle) {
   scribeEditTarget = trackPath
-
   const existing = (() => {
     const file = scribeKeyFor(trackPath)
     if (fs.existsSync(file)) return fs.readFileSync(file, 'utf8')
@@ -616,6 +683,7 @@ function onMetaCoverPicked(e) {
   const reader = new FileReader()
   reader.onload = ev => {
     _metaPendingCoverDataUrl = ev.target.result
+    _metaPendingCoverBuffer = null
     document.getElementById('metaCoverPreview').innerHTML = `<img src="${_metaPendingCoverDataUrl}" alt="cover">`
   }
   reader.readAsDataURL(file)
@@ -625,22 +693,7 @@ function onMetaCoverPicked(e) {
     _metaPendingCoverBuffer = { data: Buffer.from(ev2.target.result), mime: file.type }
   }
   bufReader.readAsArrayBuffer(file)
-
   e.target.value = ''
-}
-
-// ── Cover context menu (right-click on cover area) ────────
-function showMetaCoverCtxMenu(e) {
-  e.preventDefault()
-  e.stopPropagation()
-  const menu = document.getElementById('metaCoverCtxMenu')
-  menu.style.display = 'block'
-  // Position relative to viewport, ensure it doesn't overflow
-  const menuW = 170, menuH = 50
-  const x = Math.min(e.clientX, window.innerWidth - menuW)
-  const y = Math.min(e.clientY, window.innerHeight - menuH)
-  menu.style.left = x + 'px'
-  menu.style.top  = y + 'px'
 }
 
 async function metaPasteCover() {
@@ -663,16 +716,23 @@ async function metaPasteCover() {
         return
       }
     }
-    console.warn('No image found in clipboard')
   } catch (err) { console.error('Clipboard read failed:', err) }
 }
 
-// Close context menus on any click outside
-document.addEventListener('click', e => {
-  const ctxMenu = document.getElementById('ctxMenu')
-  const coverMenu = document.getElementById('metaCoverCtxMenu')
-  if (ctxMenu && !ctxMenu.contains(e.target)) ctxMenu.style.display = 'none'
-  if (coverMenu && !coverMenu.contains(e.target)) coverMenu.style.display = 'none'
+function showMetaCoverCtxMenu(e) {
+  e.preventDefault()
+  e.stopPropagation()
+  const menu = document.getElementById('metaCoverCtxMenu')
+  menu.style.display = 'block'
+  const x = Math.min(e.clientX, window.innerWidth - 160)
+  const y = Math.min(e.clientY, window.innerHeight - 60)
+  menu.style.left = x + 'px'
+  menu.style.top  = y + 'px'
+}
+
+document.addEventListener('mousedown', e => {
+  const menu = document.getElementById('metaCoverCtxMenu')
+  if (menu && !menu.contains(e.target)) menu.style.display = 'none'
 })
 
 async function saveMetadata() {
@@ -694,14 +754,6 @@ async function saveMetadata() {
     title: newTitle, artist: newArtist, year: newYear, genre: newGenre
   }, _metaPendingCoverBuffer || null)
 
-  // Re-read the cover art from the newly written file so it's accurate
-  let newCoverUrl = _metaPendingCoverDataUrl || _metaTrack.coverUrl
-  if (_metaPendingCoverBuffer) {
-    // We wrote a new cover — use the pending data URL
-    newCoverUrl = _metaPendingCoverDataUrl
-  }
-
-  // Update every in-memory reference to this track
   for (const tracks of Object.values(playlists)) {
     for (const t of tracks) {
       if (t.path !== _metaTrack.path) continue
@@ -709,7 +761,7 @@ async function saveMetadata() {
       if (newArtist) t.artist = newArtist
       if (newYear)   t.year   = newYear
       if (newGenre)  t.genre  = newGenre
-      if (newCoverUrl) t.coverUrl = newCoverUrl
+      if (_metaPendingCoverDataUrl) t.coverUrl = _metaPendingCoverDataUrl
     }
   }
 
@@ -725,38 +777,28 @@ async function saveMetadata() {
   closeMetadataEditor()
 }
 
-// ── ffmpeg tag writer ─────────────────────────────────────
-// Writes title, artist, year (date), genre, and optionally embedded cover art.
-// Formats that don't support embedded cover art (wav, ogg, wma) silently skip
-// the cover — metadata tags are still written for all formats.
 async function writeTagsWithFfmpeg(filePath, tags, coverBuf) {
   const os  = require('os')
   const ext = path.extname(filePath).toLowerCase()
   const tmp = path.join(os.tmpdir(), `lp_meta_${Date.now()}${ext}`)
   let coverTmp = null
 
-  // These containers cannot embed cover art — skip it silently
-  const NO_COVER_EXTS = new Set(['.wav', '.ogg', '.wma', '.aiff', '.aif', '.pcm'])
-  const canEmbedCover = coverBuf && !NO_COVER_EXTS.has(ext)
-
   return new Promise((resolve) => {
     let stderrLog = ''
     const args = ['-y', '-i', filePath]
 
-    if (canEmbedCover) {
+    if (coverBuf) {
       coverTmp = path.join(os.tmpdir(), `lp_cover_${Date.now()}.jpg`)
       fs.writeFileSync(coverTmp, coverBuf.data)
       args.push('-i', coverTmp)
     }
 
-    // ── Stream mapping + codec (must come before -metadata) ──
-    if (canEmbedCover) {
+    if (coverBuf) {
       if (ext === '.mp3') {
         args.push(
-          '-map', '0:a',
-          '-map', '1:v',
-          '-c:a', 'copy',
-          '-c:v', 'mjpeg',
+          '-map', '0:a', '-map', '1:v',
+          '-c:a', 'copy', '-c:v', 'mjpeg',
+          '-id3v2_version', '3',
           '-metadata:s:v', 'title=Album cover',
           '-metadata:s:v', 'comment=Cover (front)'
         )
@@ -765,24 +807,16 @@ async function writeTagsWithFfmpeg(filePath, tags, coverBuf) {
       } else if (ext === '.m4a' || ext === '.aac') {
         args.push('-map', '0:a', '-map', '1:v', '-c', 'copy', '-disposition:v:0', 'attached_pic')
       } else {
-        // Generic fallback for any other container that supports video streams
         args.push('-map', '0:a', '-map', '1:v', '-c', 'copy')
       }
     } else {
-      // No cover (or format doesn't support it) — preserve existing streams only
       args.push('-map', '0', '-c', 'copy')
     }
 
-    // ── Metadata flags (MUST come after stream mapping) ───────
-    if (newTitle(tags))  args.push('-metadata', `title=${tags.title}`)
-    if (newArtist(tags)) args.push('-metadata', `artist=${tags.artist}`)
-    if (newYear(tags))   args.push('-metadata', `date=${tags.year}`)   // 'date' is the ffmpeg key for year
-    if (newGenre(tags))  args.push('-metadata', `genre=${tags.genre}`)
-
-    // For MP3: force ID3v2.3 tags so Windows Media Player reads them correctly
-    if (ext === '.mp3') {
-      args.push('-id3v2_version', '3', '-write_id3v1', '1')
-    }
+    if (tags.title)  args.push('-metadata', `title=${tags.title}`)
+    if (tags.artist) args.push('-metadata', `artist=${tags.artist}`)
+    if (tags.year)   args.push('-metadata', `date=${tags.year}`)
+    if (tags.genre)  args.push('-metadata', `genre=${tags.genre}`)
 
     args.push(tmp)
 
@@ -808,13 +842,7 @@ async function writeTagsWithFfmpeg(filePath, tags, coverBuf) {
   })
 }
 
-function newTitle(tags)  { return tags.title  && tags.title.trim()  !== '' }
-function newArtist(tags) { return tags.artist && tags.artist.trim() !== '' }
-function newYear(tags)   { return tags.year   && tags.year.trim()   !== '' }
-function newGenre(tags)  { return tags.genre  && tags.genre.trim()  !== '' }
-
-
-// ── Track context menu ────────────────────────────────────
+// ── Track Context Menu ────────────────────────────────────
 let _ctxMenuTrack = null
 
 function showTrackCtxMenu(e, track, playlistName, originalIndex) {
@@ -823,6 +851,38 @@ function showTrackCtxMenu(e, track, playlistName, originalIndex) {
   _ctxMenuTrack = track
   const menu = document.getElementById('ctxMenu')
   const scribes = hasScribe(track.path)
+
+  // "Move To" never appears for Liked Songs; exclude current playlist and Liked Songs from targets
+  const moveTargets = playlistName === LIKED_PLAYLIST
+    ? []
+    : Object.keys(playlists).filter(n => n !== LIKED_PLAYLIST && n !== playlistName)
+
+  let moveToHtml = ''
+  if (moveTargets.length > 0) {
+    moveToHtml = `
+      <div class="ctx-item ctx-has-sub" id="ctxMoveToItem">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+          <line x1="12" y1="18" x2="12" y2="12"/>
+          <line x1="9" y1="15" x2="15" y2="15"/>
+        </svg>
+        Move To
+        <svg class="ctx-sub-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="9" height="9" style="margin-left:auto;opacity:0.5">
+          <polyline points="9 18 15 12 9 6"/>
+        </svg>
+        <div class="ctx-submenu" id="ctxMoveSubmenu">
+          ${moveTargets.map(n => `
+            <div class="ctx-item ctx-sub-item" data-target="${escHtml(n)}">
+              <div class="pl-thumb" style="width:18px;height:18px;border-radius:4px;background:${randomColor(n)};display:inline-flex;align-items:center;justify-content:center;font-size:9px;flex-shrink:0">♪</div>
+              ${escHtml(n)}
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `
+  }
+
   menu.innerHTML = `
     <div class="ctx-item" id="ctxScribeItem">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -838,7 +898,19 @@ function showTrackCtxMenu(e, track, playlistName, originalIndex) {
       </svg>
       Edit Metadata
     </div>
+    ${moveToHtml}
+    <div class="ctx-divider"></div>
+    <div class="ctx-item danger" id="ctxDeleteItem">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="3 6 5 6 21 6"/>
+        <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+        <path d="M10 11v6"/><path d="M14 11v6"/>
+        <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+      </svg>
+      Delete File…
+    </div>
   `
+
   document.getElementById('ctxScribeItem').addEventListener('click', () => {
     menu.style.display = 'none'
     if (_ctxMenuTrack) openScribeEditor(_ctxMenuTrack.path, _ctxMenuTrack.title || 'Unknown')
@@ -847,35 +919,182 @@ function showTrackCtxMenu(e, track, playlistName, originalIndex) {
     menu.style.display = 'none'
     if (_ctxMenuTrack) openMetadataEditor(_ctxMenuTrack, playlistName, originalIndex)
   })
+  document.getElementById('ctxDeleteItem').addEventListener('click', () => {
+    menu.style.display = 'none'
+    if (_ctxMenuTrack) openDeleteConfirm(_ctxMenuTrack)
+  })
+
+  const submenu = document.getElementById('ctxMoveSubmenu')
+  if (submenu) {
+    submenu.querySelectorAll('.ctx-sub-item').forEach(item => {
+      item.addEventListener('click', e => {
+        e.stopPropagation()
+        menu.style.display = 'none'
+        if (_ctxMenuTrack) doMoveTrack(_ctxMenuTrack, playlistName, item.dataset.target)
+      })
+    })
+  }
+
   menu.style.display = 'block'
-  const x = Math.min(e.clientX, window.innerWidth - 180)
-  const y = Math.min(e.clientY, window.innerHeight - 80)
+  const x = Math.min(e.clientX, window.innerWidth - 220)
+  const y = Math.min(e.clientY, window.innerHeight - 180)
   menu.style.left = x + 'px'
   menu.style.top = y + 'px'
 }
 
-// ── Settings cogwheel → opens metadata editor for current track ──
-function openSettingsMenu(e) {
-  if (!currentPlaylist || currentTrackIndex < 0) return
-  const track = playlists[currentPlaylist]?.[currentTrackIndex]
-  if (!track) return
-  openMetadataEditor(track, currentPlaylist, currentTrackIndex)
+// ── Move Track ────────────────────────────────────────────
+async function doMoveTrack(track, fromPlaylist, toPlaylist) {
+  if (!playlists[toPlaylist]) return
+
+  const os = require('os')
+  const targetTracks = playlists[toPlaylist]
+  let targetDir
+  if (targetTracks.length > 0) {
+    targetDir = path.dirname(targetTracks[0].path)
+  } else {
+    targetDir = path.join(os.homedir(), 'Music', 'lasts-player-downloads')
+    if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true })
+  }
+
+  const fileName = path.basename(track.path)
+  let destPath = path.join(targetDir, fileName)
+
+  if (track.path === destPath) {
+    removeTrackFromLibrary(track.path)
+    if (!playlists[toPlaylist]) playlists[toPlaylist] = []
+    playlists[toPlaylist].push({ ...track })
+    savePlaylists()
+    renderPlaylists()
+    if (viewedPlaylist) loadPlaylist(viewedPlaylist)
+    return
+  }
+
+  if (fs.existsSync(destPath)) {
+    const ext = path.extname(fileName)
+    destPath = path.join(targetDir, `${path.basename(fileName, ext)}_${Date.now()}${ext}`)
+  }
+
+  try {
+    try {
+      fs.renameSync(track.path, destPath)
+    } catch (_) {
+      fs.copyFileSync(track.path, destPath)
+      fs.unlinkSync(track.path)
+    }
+  } catch (err) {
+    console.error('Move failed:', err)
+    return
+  }
+
+  const wasCurrentTrack = currentPlaylist === fromPlaylist && playlists[fromPlaylist]?.[currentTrackIndex]?.path === track.path
+  if (wasCurrentTrack) {
+    stopPlayback()
+    if (lyricsVisible) closeLyricsView()
+  }
+
+  removeTrackFromLibrary(track.path)
+
+  if (!playlists[toPlaylist]) playlists[toPlaylist] = []
+  playlists[toPlaylist].push({ ...track, path: destPath })
+
+  savePlaylists()
+  renderPlaylists()
+  if (viewedPlaylist) loadPlaylist(viewedPlaylist)
+}
+
+// ── Delete Confirm Modal ──────────────────────────────────
+let _deleteTarget = null
+
+function openDeleteConfirm(track) {
+  _deleteTarget = track
+  const modal = document.getElementById('deleteConfirmBackdrop')
+  const nameEl = document.getElementById('deleteConfirmName')
+  const artistEl = document.getElementById('deleteConfirmArtist')
+  const pathEl = document.getElementById('deleteConfirmPath')
+
+  nameEl.textContent = track.title || path.basename(track.path)
+  artistEl.textContent = track.artist || '—'
+  pathEl.textContent = track.path
+
+  document.getElementById('deleteStep1').style.display = 'flex'
+  document.getElementById('deleteStep2').style.display = 'none'
+
+  modal.style.display = 'flex'
+  requestAnimationFrame(() => modal.classList.add('delete-confirm-visible'))
+}
+
+function closeDeleteConfirm() {
+  const modal = document.getElementById('deleteConfirmBackdrop')
+  modal.classList.remove('delete-confirm-visible')
+  setTimeout(() => { modal.style.display = 'none' }, 350)
+  _deleteTarget = null
+}
+
+function deleteConfirmStep2() {
+  document.getElementById('deleteStep1').style.display = 'none'
+  document.getElementById('deleteStep2').style.display = 'flex'
+}
+
+async function confirmDeleteFile() {
+  if (!_deleteTarget) return
+  const track = _deleteTarget
+  closeDeleteConfirm()
+
+  const wasCurrentTrack = currentPlaylist && playlists[currentPlaylist]?.[currentTrackIndex]?.path === track.path
+  if (wasCurrentTrack) {
+    stopPlayback()
+    if (lyricsVisible) closeLyricsView()
+    document.getElementById('songName').textContent = 'No song playing'
+    document.getElementById('artistName').textContent = '—'
+    document.getElementById('genreName').textContent = '—'
+    document.getElementById('coverArt').innerHTML = `<div class="cover-placeholder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>`
+    currentTrackIndex = -1
+  }
+
+  removeTrackFromLibrary(track.path)
+
+  try {
+    const scribeFile = scribeKeyFor(track.path)
+    if (fs.existsSync(scribeFile)) fs.unlinkSync(scribeFile)
+    delete scribeData[track.path]
+  } catch (_) {}
+
+  try {
+    if (fs.existsSync(track.path)) fs.unlinkSync(track.path)
+  } catch (err) {
+    console.error('File delete failed:', err)
+  }
+
+  renderPlaylists()
+  if (viewedPlaylist && playlists[viewedPlaylist]) {
+    loadPlaylist(viewedPlaylist)
+  } else {
+    renderTracks()
+  }
+  updateScribeBtn()
 }
 
 // ── Playback ──────────────────────────────────────────────
+// BUG FIX: playSong now always requires an explicit fromPlaylist argument when
+// called from outside playback continuation (nextSong/prevSong). This ensures
+// that double-clicking Playlist 2 always plays Playlist 2's tracks, never the
+// previously-playing Playlist 1's tracks.
 function playSong(index, fromPlaylist) {
+  // fromPlaylist must be provided when initiating playback from a track row or
+  // playlist double-click. Fall back to currentPlaylist only for internal
+  // continuation calls (nextSong, prevSong, repeat) where fromPlaylist is omitted.
   const targetPlaylist = fromPlaylist || currentPlaylist
   if (!targetPlaylist) return
   const tracks = playlists[targetPlaylist]
   if (!tracks || index < 0 || index >= tracks.length) return
 
-  if (fromPlaylist && fromPlaylist !== currentPlaylist) {
-    currentPlaylist = fromPlaylist
-    loadPlaylist(fromPlaylist)
-  }
+  // Update which playlist is PLAYING — this is the critical line.
+  // Before this fix, currentPlaylist was still the old playlist when nextSong()
+  // or playSong(0) ran after a double-click, so tracks were pulled from the
+  // wrong list.
+  currentPlaylist = targetPlaylist
 
   if (currentSound) { currentSound.stop(); currentSound.unload(); clearInterval(progressInterval) }
-
   if (lyricsVisible) closeLyricsView()
 
   currentTrackIndex = index
@@ -905,6 +1124,10 @@ function playSong(index, fromPlaylist) {
   currentSound.play()
   document.getElementById('progressFill').style.width = '0%'
   document.getElementById('currentTime').textContent = '0:00'
+
+  // Re-render tracks so the playing highlight updates in whichever playlist
+  // is currently being viewed (may differ from the one now playing)
+  renderTracks()
 }
 
 function updateProgress() {
@@ -929,13 +1152,22 @@ function updateNowPlayingUI(track) {
 
 function togglePlay() {
   if (!currentSound) {
-    if (currentPlaylist && playlists[currentPlaylist]?.length > 0) playSong(currentTrackIndex >= 0 ? currentTrackIndex : 0)
+    // BUG FIX: use viewedPlaylist as fallback so clicking play when nothing
+    // is loaded starts the viewed playlist, not a null/stale one
+    const target = currentPlaylist || viewedPlaylist
+    if (target && playlists[target]?.length > 0) {
+      playSong(currentTrackIndex >= 0 ? currentTrackIndex : 0, target)
+    }
     return
   }
   currentSound.playing() ? currentSound.pause() : currentSound.play()
 }
 
 function updatePlayBtn() {
+  if ('mediaSession' in navigator) {
+    navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused'
+  }
+  require('electron').ipcRenderer.send('update-play-state', isPlaying)
   const icon = document.getElementById('playIcon')
   if (isPlaying) { icon.innerHTML = '<rect x="6" y="4" width="4" height="16" rx="1.5"/><rect x="14" y="4" width="4" height="16" rx="1.5"/>' }
   else { icon.innerHTML = '<polygon points="5 3 19 12 5 21 5 3"/>' }
@@ -968,7 +1200,9 @@ function prevSong() {
   if (!currentPlaylist) return
   const tracks = playlists[currentPlaylist]
   if (!tracks?.length) return
-  if (currentSound && currentSound.seek() > 3) { currentSound.seek(0); return }
+  // BUG FIX: check seek() returns a number before comparing
+  const seek = currentSound ? currentSound.seek() : 0
+  if (typeof seek === 'number' && seek > 3) { currentSound.seek(0); return }
   if (isShuffle) {
     if (shuffleHistoryPos > 0) { shuffleHistoryPos--; playSong(shuffleHistory[shuffleHistoryPos]) }
     else { if (currentSound) currentSound.seek(0) }
@@ -1016,7 +1250,7 @@ function _toggleLikePath(trackPath) {
 }
 function updateLikeBtn() {
   if (!currentPlaylist || currentTrackIndex < 0) return
-  const track = playlists[currentPlaylist][currentTrackIndex]
+  const track = playlists[currentPlaylist]?.[currentTrackIndex]
   if (!track) return
   const liked = likedSongs.has(track.path)
   const btn = document.getElementById('likeBtn'), icon = document.getElementById('likeIcon')
@@ -1024,32 +1258,49 @@ function updateLikeBtn() {
   icon.setAttribute('fill', liked ? 'var(--like)' : 'none')
 }
 
-// ── Keyboard shortcuts ────────────────────────────────────
+// ── Keyboard shortcuts (including media keys) ─────────────
 document.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
+
   switch (e.code) {
-    case 'Space':       e.preventDefault(); togglePlay(); break
-    case 'MediaPlayPause': e.preventDefault(); togglePlay(); break
-    case 'MediaNextTrack': e.preventDefault(); nextSong(); break
-    case 'MediaPreviousTrack': e.preventDefault(); prevSong(); break
-    case 'MediaStop':   e.preventDefault(); stopPlayback(); break
-    case 'Escape':      if (lyricsVisible) closeLyricsView(); break
-    case 'ArrowRight':  if (e.altKey||e.metaKey) { e.preventDefault(); nextSong() } break
-    case 'ArrowLeft':   if (e.altKey||e.metaKey) { e.preventDefault(); prevSong() } break
+    case 'Space':
+      e.preventDefault(); togglePlay(); break
+    case 'MediaPlayPause':
+      e.preventDefault(); togglePlay(); break
+    case 'MediaNextTrack':
+      e.preventDefault(); nextSong(); break
+    case 'MediaPreviousTrack':
+      e.preventDefault(); prevSong(); break
+    case 'MediaStop':
+      e.preventDefault(); stopPlayback(); break
+    case 'Escape':
+      if (lyricsVisible) closeLyricsView(); break
+    case 'ArrowRight':
+      if (e.altKey || e.metaKey) { e.preventDefault(); nextSong() } break
+    case 'ArrowLeft':
+      if (e.altKey || e.metaKey) { e.preventDefault(); prevSong() } break
     case 'ArrowUp':
-      if (e.altKey||e.metaKey) {
-        e.preventDefault(); volume = Math.min(1, volume + 0.05)
+      if (e.altKey || e.metaKey) {
+        e.preventDefault()
+        volume = Math.min(1, volume + 0.05)
         document.getElementById('volFill').style.height = (volume * 100).toFixed(1) + '%'
         Howler.volume(volume)
-        if (currentSound) currentSound.volume(Math.min(1, volume * getTrackVolume(playlists[currentPlaylist]?.[currentTrackIndex] || {})))
+        if (currentSound) {
+          const track = playlists[currentPlaylist]?.[currentTrackIndex]
+          currentSound.volume(Math.min(1, volume * getTrackVolume(track)))
+        }
       }
       break
     case 'ArrowDown':
-      if (e.altKey||e.metaKey) {
-        e.preventDefault(); volume = Math.max(0, volume - 0.05)
+      if (e.altKey || e.metaKey) {
+        e.preventDefault()
+        volume = Math.max(0, volume - 0.05)
         document.getElementById('volFill').style.height = (volume * 100).toFixed(1) + '%'
         Howler.volume(volume)
-        if (currentSound) currentSound.volume(Math.min(1, volume * getTrackVolume(playlists[currentPlaylist]?.[currentTrackIndex] || {})))
+        if (currentSound) {
+          const track = playlists[currentPlaylist]?.[currentTrackIndex]
+          currentSound.volume(Math.min(1, volume * getTrackVolume(track)))
+        }
       }
       break
   }
@@ -1068,7 +1319,7 @@ async function addFolder() {
   const tracks = []
   for (const file of files) {
     const filePath = path.join(folderPath, file)
-    const track = { title: path.basename(file, path.extname(file)), artist: 'Unknown Artist', album: 'Unknown Album', genre: '', duration: 0, coverUrl: null, path: filePath, replayGain: 0, year: '' }
+    const track = { title: path.basename(file, path.extname(file)), artist: 'Unknown Artist', album: 'Unknown Album', genre: '', duration: 0, coverUrl: null, path: filePath, replayGain: 0 }
     try {
       const meta = await mm.parseFile(filePath, { duration: true, skipCovers: false })
       const tags = meta.common
@@ -1077,7 +1328,6 @@ async function addFolder() {
       if (tags.album) track.album = tags.album
       if (tags.genre?.length) track.genre = tags.genre[0]
       if (meta.format.duration) track.duration = meta.format.duration
-      if (tags.year) track.year = String(tags.year)
       const pic = tags.picture?.[0]
       if (pic) { const blob = new Blob([pic.data], { type: pic.format }); track.coverUrl = URL.createObjectURL(blob) }
       if (tags.replaygain_track_gain?.dB) track.replayGain = tags.replaygain_track_gain.dB
@@ -1097,10 +1347,17 @@ function renderPlaylists() {
   const sorted = [...names.filter(n => n === LIKED_PLAYLIST), ...names.filter(n => n !== LIKED_PLAYLIST)]
   sorted.forEach((name, idx) => {
     const div = document.createElement('div')
-    div.className = 'pl-item' + (name === currentPlaylist ? ' active' : '')
+    div.className = 'pl-item' + (name === viewedPlaylist ? ' active' : '')
+    div.dataset.name = name
     div.style.animation = `rowFadeIn 0.3s cubic-bezier(0.16,1,0.3,1) ${idx * 0.04}s both`
+    
     div.onclick = () => loadPlaylist(name)
-    div.ondblclick = () => { loadPlaylist(name); playSong(0) }
+
+    div.ondblclick = () => {
+      loadPlaylist(name)         // updates viewedPlaylist & re-renders track list
+      playSong(0, name)          // ← pass name explicitly, not currentPlaylist
+    }
+
     div.oncontextmenu = (e) => showPlaylistCtxMenu(e, name)
     const grad = randomColor(name)
     const customCover = playlistCovers[name]
@@ -1118,16 +1375,25 @@ function renderPlaylists() {
   })
 }
 
+// loadPlaylist updates viewedPlaylist only — never currentPlaylist
 function loadPlaylist(name) {
-  currentPlaylist = name
+  if (!playlists[name]) return
+  viewedPlaylist = name
   const tracks = playlists[name]
   document.getElementById('playlistTitle').textContent = name
   document.getElementById('songCount').textContent = `${tracks.length} songs`
   document.getElementById('runtime').textContent = totalRuntime(tracks)
   const genres = [...new Set(tracks.map(t => t.genre).filter(Boolean))].slice(0, 3)
   document.getElementById('playlistGenre').textContent = genres.join(' · ')
-  if (isShuffle) initShuffleState(currentTrackIndex >= 0 && currentTrackIndex < tracks.length ? currentTrackIndex : -1)
-  renderTracks(); renderPlaylists()
+  if (isShuffle && currentPlaylist === name) {
+    initShuffleState(currentTrackIndex >= 0 && currentTrackIndex < tracks.length ? currentTrackIndex : -1)
+  }
+  renderTracks()
+
+  // ── Just swap the .active class, don't re-render the whole sidebar ──
+  document.querySelectorAll('.pl-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.name === name)
+  })
 }
 
 function renderTracks() {
@@ -1139,7 +1405,7 @@ function renderTracks() {
   const albumHeader = document.getElementById('trackHeaderAlbum')
   if (albumHeader) albumHeader.textContent = isOverall ? 'Playlist' : 'Album'
 
-  if (!currentPlaylist && !isOverall) {
+  if (!viewedPlaylist && !isOverall) {
     list.innerHTML = `<div class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg><p>Add a folder to get started</p></div>`
     return
   }
@@ -1162,14 +1428,18 @@ function renderTracks() {
   list.innerHTML = ''
 
   filtered.forEach(({ track, playlistName, originalIndex }) => {
+    // isActive: only highlight the track that is ACTUALLY playing
     const isActive = playlistName === currentPlaylist && originalIndex === currentTrackIndex
     const liked = likedSongs.has(track.path)
 
     const div = document.createElement('div')
-    div.className = 'track-row' + (isActive ? ' playing' : '')
+    div.className = 'track-row' + (isActive && isPlaying ? ' playing' : '')
     div.dataset.playlist = playlistName
     div.dataset.index = originalIndex
+
+    // BUG FIX: double-click on a track row must pass playlistName explicitly
     div.ondblclick = () => playSong(originalIndex, playlistName)
+
     div.oncontextmenu = (e) => showTrackCtxMenu(e, track, playlistName, originalIndex)
 
     const artCell = track.coverUrl
@@ -1278,12 +1548,30 @@ function showPlaylistCtxMenu(e, name) {
   menu.style.top = y + 'px'
 }
 
+document.addEventListener('click', e => {
+  const menu = document.getElementById('ctxMenu')
+  if (menu && !menu.contains(e.target)) {
+    menu.style.display = 'none'
+  }
+  if (_importDropdownOpen) closeImportDropdown()
+})
+
+document.addEventListener('mousedown', e => {
+  const menu = document.getElementById('ctxMenu')
+  if (menu && menu.style.display !== 'none' && !menu.contains(e.target)) {
+    menu.style.display = 'none'
+  }
+})
+
 function deletePlaylist(name) {
   document.getElementById('ctxMenu').style.display = 'none'
   if (!playlists[name]) return
   delete playlists[name]; delete playlistCovers[name]
   if (currentPlaylist === name) {
     currentPlaylist = null; stopPlayback(); resetShuffleState()
+  }
+  if (viewedPlaylist === name) {
+    viewedPlaylist = null
     document.getElementById('playlistTitle').textContent = 'Select a playlist'
     document.getElementById('songCount').textContent = '0 songs'
     document.getElementById('runtime').textContent = '—'
@@ -1327,10 +1615,11 @@ function savePlaylistEdit() {
     playlists[newName] = playlists[editingPlaylist]; delete playlists[editingPlaylist]
     if (playlistCovers[editingPlaylist]) { playlistCovers[newName] = playlistCovers[editingPlaylist]; delete playlistCovers[editingPlaylist] }
     if (currentPlaylist === editingPlaylist) currentPlaylist = newName
+    if (viewedPlaylist === editingPlaylist) viewedPlaylist = newName
     editingPlaylist = newName
   }
   if (pendingCoverDataUrl) playlistCovers[editingPlaylist] = pendingCoverDataUrl
-  if (currentPlaylist === editingPlaylist) document.getElementById('playlistTitle').textContent = editingPlaylist
+  if (viewedPlaylist === editingPlaylist) document.getElementById('playlistTitle').textContent = editingPlaylist
   closeModal(); renderPlaylists(); savePlaylists()
 }
 
@@ -1374,6 +1663,458 @@ document.getElementById('searchInput').addEventListener('input', onSearchInput)
 function minimizeWindow() { require('@electron/remote').getCurrentWindow().minimize() }
 function maximizeWindow() { const w = require('@electron/remote').getCurrentWindow(); w.isMaximized() ? w.unmaximize() : w.maximize() }
 function closeWindow() { saveSession(); require('@electron/remote').getCurrentWindow().close() }
+
+// ── Settings (cog) ────────────────────────────────────────
+function openSettingsMenu(e) {
+  if (!currentPlaylist || currentTrackIndex < 0) return
+  const track = playlists[currentPlaylist]?.[currentTrackIndex]
+  if (!track) return
+  openMetadataEditor(track, currentPlaylist, currentTrackIndex)
+}
+
+// ── Import dropdown ───────────────────────────────────────
+let _importDropdownOpen = false
+
+function toggleImportDropdown(e) {
+  e.stopPropagation()
+  const dd = document.getElementById('importDropdown')
+  const btn = document.getElementById('importMainBtn')
+  _importDropdownOpen = !_importDropdownOpen
+  if (_importDropdownOpen) {
+    dd.style.display = 'block'
+    requestAnimationFrame(() => dd.classList.add('import-dropdown-visible'))
+    btn.classList.add('import-btn-active')
+  } else {
+    closeImportDropdown()
+  }
+}
+
+function closeImportDropdown() {
+  const dd = document.getElementById('importDropdown')
+  const btn = document.getElementById('importMainBtn')
+  if (!dd) return
+  dd.classList.remove('import-dropdown-visible')
+  btn && btn.classList.remove('import-btn-active')
+  _importDropdownOpen = false
+  setTimeout(() => { if (!_importDropdownOpen) dd.style.display = 'none' }, 200)
+}
+
+document.getElementById('importYtItem').addEventListener('click', () => {
+  closeImportDropdown(); openYtImport()
+})
+document.getElementById('importFileItem').addEventListener('click', () => {
+  closeImportDropdown(); openFileImport()
+})
+
+// ── From File import ──────────────────────────────────────
+let _fileImportPath = null
+
+function openFileImport() {
+  _fileImportPath = null
+  document.getElementById('fileImportName').textContent = 'No file selected'
+  document.getElementById('fileImportName').classList.remove('has-file')
+  document.getElementById('fileImportBtn').disabled = true
+
+  const sel = document.getElementById('fileImportPlaylistSelect')
+  sel.innerHTML = '<option value="__default__">Default (lasts-player-downloads)</option>'
+  for (const name of Object.keys(playlists)) {
+    if (name === LIKED_PLAYLIST) continue
+    const opt = document.createElement('option')
+    opt.value = name; opt.textContent = name
+    sel.appendChild(opt)
+  }
+
+  const backdrop = document.getElementById('fileImportBackdrop')
+  backdrop.style.display = 'flex'
+  requestAnimationFrame(() => backdrop.classList.add('yt-import-visible'))
+}
+
+function closeFileImport() {
+  const backdrop = document.getElementById('fileImportBackdrop')
+  backdrop.classList.remove('yt-import-visible')
+  setTimeout(() => { backdrop.style.display = 'none' }, 350)
+  _fileImportPath = null
+}
+
+async function browseImportFile() {
+  const { dialog } = require('@electron/remote')
+  const result = await dialog.showOpenDialog({
+    properties: ['openFile'],
+    filters: [
+      { name: 'Audio Files', extensions: ['mp3', 'wav', 'flac', 'ogg', 'm4a', 'aac', 'wma'] }
+    ]
+  })
+  if (result.canceled || !result.filePaths.length) return
+
+  _fileImportPath = result.filePaths[0]
+
+  const nameEl = document.getElementById('fileImportName')
+  nameEl.textContent = path.basename(_fileImportPath)
+  nameEl.classList.add('has-file')
+  document.getElementById('fileImportBtn').disabled = false
+}
+
+function onFileImportPicked(e) { e.target.value = '' }
+
+async function confirmFileImport() {
+  if (!_fileImportPath) return
+  const os = require('os')
+
+  const selectedPlaylist = document.getElementById('fileImportPlaylistSelect').value
+  let targetDir, targetPlaylistName
+
+  if (selectedPlaylist === '__default__') {
+    const musicDir = path.join(os.homedir(), 'Music', 'lasts-player-downloads')
+    if (!fs.existsSync(musicDir)) fs.mkdirSync(musicDir, { recursive: true })
+    targetDir = musicDir
+    targetPlaylistName = 'lasts-player-downloads'
+  } else {
+    const tracks = playlists[selectedPlaylist]
+    targetDir = (tracks && tracks.length > 0)
+      ? path.dirname(tracks[0].path)
+      : (() => { const d = path.join(os.homedir(), 'Music', 'lasts-player-downloads'); if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); return d })()
+    targetPlaylistName = selectedPlaylist
+  }
+
+  const fileName = path.basename(_fileImportPath)
+  let destPath = path.join(targetDir, fileName)
+
+  try {
+    if (_fileImportPath !== destPath) {
+      if (fs.existsSync(destPath)) {
+        const ext = path.extname(fileName)
+        destPath = path.join(targetDir, `${path.basename(fileName, ext)}_${Date.now()}${ext}`)
+      }
+      try {
+        fs.renameSync(_fileImportPath, destPath)
+      } catch (_) {
+        fs.copyFileSync(_fileImportPath, destPath)
+        fs.unlinkSync(_fileImportPath)
+      }
+    }
+  } catch (err) {
+    console.error('File move failed:', err)
+    return
+  }
+
+  const track = {
+    title: path.basename(destPath, path.extname(destPath)),
+    artist: 'Unknown Artist', album: '', genre: '',
+    year: '', duration: 0, coverUrl: null, path: destPath, replayGain: 0
+  }
+  try {
+    const meta = await mm.parseFile(destPath, { duration: true, skipCovers: false })
+    const tags = meta.common
+    if (tags.title)           track.title    = tags.title
+    if (tags.artist)          track.artist   = tags.artist
+    if (tags.album)           track.album    = tags.album
+    if (tags.genre?.length)   track.genre    = tags.genre[0]
+    if (meta.format.duration) track.duration = meta.format.duration
+    if (tags.year)            track.year     = String(tags.year)
+    const pic = tags.picture?.[0]
+    if (pic) { const blob = new Blob([pic.data], { type: pic.format }); track.coverUrl = URL.createObjectURL(blob) }
+  } catch (_) {}
+
+  if (!playlists[targetPlaylistName]) playlists[targetPlaylistName] = []
+  playlists[targetPlaylistName].push(track)
+  savePlaylists(); renderPlaylists(); loadPlaylist(targetPlaylistName)
+  closeFileImport()
+}
+
+// ── YouTube Import ────────────────────────────────────────
+let _ytImporting = false
+
+function openYtImport() {
+  const sel = document.getElementById('ytPlaylistSelect')
+  sel.innerHTML = '<option value="__default__">Default (lasts-player-downloads)</option>'
+  for (const name of Object.keys(playlists)) {
+    if (name === LIKED_PLAYLIST) continue
+    const opt = document.createElement('option')
+    opt.value = name
+    opt.textContent = name
+    sel.appendChild(opt)
+  }
+
+  document.getElementById('ytUrlInput').value = ''
+  document.getElementById('ytProgress').style.display = 'none'
+  document.getElementById('ytProgressBar').style.width = '0%'
+  document.getElementById('ytProgressLabel').textContent = 'Starting…'
+  const btn = document.getElementById('ytImportBtn')
+  btn.disabled = false
+  btn.textContent = 'Import'
+
+  const backdrop = document.getElementById('ytImportBackdrop')
+  backdrop.style.display = 'flex'
+  requestAnimationFrame(() => backdrop.classList.add('yt-import-visible'))
+  setTimeout(() => document.getElementById('ytUrlInput').focus(), 350)
+}
+
+function closeYtImport() {
+  if (_ytImporting) return
+  const backdrop = document.getElementById('ytImportBackdrop')
+  backdrop.classList.remove('yt-import-visible')
+  setTimeout(() => { backdrop.style.display = 'none' }, 350)
+}
+
+function ytSetProgress(pct, label) {
+  document.getElementById('ytProgressBar').style.width = pct + '%'
+  document.getElementById('ytProgressLabel').textContent = label
+}
+
+async function startYtImport() {
+  const url = document.getElementById('ytUrlInput').value.trim()
+  if (!url) { document.getElementById('ytUrlInput').focus(); return }
+  if (_ytImporting) return
+
+  const os = require('os')
+  const { spawn } = require('child_process')
+  const ffmpegPath = require('ffmpeg-static')
+  const ytDlpPath = path.join(
+    path.dirname(require.resolve('yt-dlp-exec/package.json')),
+    'bin',
+    process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp'
+  )
+
+  const selectedPlaylist = document.getElementById('ytPlaylistSelect').value
+  let targetDir = null
+  let targetPlaylistName = null
+
+  if (selectedPlaylist === '__default__') {
+    const musicDir = path.join(os.homedir(), 'Music', 'lasts-player-downloads')
+    if (!fs.existsSync(musicDir)) fs.mkdirSync(musicDir, { recursive: true })
+    targetDir = musicDir
+    targetPlaylistName = null
+  } else {
+    const tracks = playlists[selectedPlaylist]
+    if (tracks && tracks.length > 0) {
+      targetDir = path.dirname(tracks[0].path)
+    } else {
+      const musicDir = path.join(os.homedir(), 'Music', 'lasts-player-downloads')
+      if (!fs.existsSync(musicDir)) fs.mkdirSync(musicDir, { recursive: true })
+      targetDir = musicDir
+    }
+    targetPlaylistName = selectedPlaylist
+  }
+
+  _ytImporting = true
+  const btn = document.getElementById('ytImportBtn')
+  btn.disabled = true
+  btn.textContent = 'Importing…'
+  document.getElementById('ytProgress').style.display = 'block'
+  ytSetProgress(5, 'Fetching video info…')
+
+  try {
+    const infoJson = await new Promise((resolve, reject) => {
+      let out = ''
+      const proc = spawn(ytDlpPath, ['--dump-json', '--no-playlist', url])
+      proc.stdout.on('data', d => { out += d.toString() })
+      proc.stderr.on('data', () => {})
+      proc.on('close', code => {
+        if (code === 0) { try { resolve(JSON.parse(out)) } catch (e) { reject(e) } }
+        else reject(new Error('yt-dlp info fetch failed (code ' + code + ')'))
+      })
+    })
+
+    const videoTitle = infoJson.title || 'Unknown Title'
+    const channel    = infoJson.channel || infoJson.uploader || 'Unknown Artist'
+    const year       = infoJson.upload_date ? infoJson.upload_date.slice(0, 4) : ''
+    const thumbUrl   = infoJson.thumbnail || ''
+    const safeTitle  = videoTitle.replace(/[\\/:*?"<>|]/g, '_').trim()
+    const outputMp3  = path.join(targetDir, safeTitle + '.mp3')
+
+    ytSetProgress(15, 'Downloading audio…')
+
+    await new Promise((resolve, reject) => {
+      let stderrBuf = ''
+      const proc = spawn(ytDlpPath, [
+        '--no-playlist', '-x', '--audio-format', 'mp3', '--audio-quality', '0',
+        '--ffmpeg-location', path.dirname(ffmpegPath),
+        '-o', outputMp3.replace('.mp3', '.%(ext)s'), url
+      ])
+      proc.stderr.on('data', d => {
+        stderrBuf += d.toString()
+        const m = stderrBuf.match(/\[download\]\s+([\d.]+)%/)
+        if (m) {
+          const pct = Math.min(85, 15 + parseFloat(m[1]) * 0.7)
+          ytSetProgress(pct, `Downloading… ${m[1]}%`)
+        }
+      })
+      proc.on('close', code => {
+        if (code === 0) resolve()
+        else reject(new Error('yt-dlp download failed:\n' + stderrBuf))
+      })
+    })
+
+    ytSetProgress(88, 'Embedding metadata…')
+
+    let actualMp3 = outputMp3
+    if (!fs.existsSync(actualMp3)) {
+      const files = fs.readdirSync(targetDir)
+        .filter(f => f.endsWith('.mp3'))
+        .map(f => ({ f, t: fs.statSync(path.join(targetDir, f)).mtimeMs }))
+        .sort((a, b) => b.t - a.t)
+      if (files.length) actualMp3 = path.join(targetDir, files[0].f)
+    }
+
+    let thumbTmp = null
+    if (thumbUrl) {
+      thumbTmp = path.join(os.tmpdir(), `lp_yt_thumb_${Date.now()}.jpg`)
+      await new Promise((resolve) => {
+        const file = fs.createWriteStream(thumbTmp)
+        const getter = thumbUrl.startsWith('https') ? require('https') : require('http')
+        const request = getter.get(thumbUrl, res => {
+          if (res.statusCode === 301 || res.statusCode === 302) {
+            file.close()
+            const redir = (res.headers.location.startsWith('https') ? require('https') : require('http')).get(res.headers.location, r2 => {
+              r2.pipe(file)
+              file.on('finish', () => { file.close(); resolve() })
+            })
+            redir.on('error', () => { thumbTmp = null; resolve() })
+            return
+          }
+          res.pipe(file)
+          file.on('finish', () => { file.close(); resolve() })
+        })
+        request.on('error', () => { thumbTmp = null; resolve() })
+      })
+    }
+
+    const taggedMp3 = actualMp3.replace('.mp3', '_tagged.mp3')
+    const ffArgs = ['-y', '-i', actualMp3]
+    if (thumbTmp && fs.existsSync(thumbTmp)) {
+      ffArgs.push(
+        '-i', thumbTmp, '-map', '0:a', '-map', '1:v',
+        '-c:a', 'copy', '-c:v', 'mjpeg',
+        '-id3v2_version', '3', '-write_id3v1', '1',
+        '-metadata:s:v', 'title=Album cover',
+        '-metadata:s:v', 'comment=Cover (front)'
+      )
+    } else {
+      ffArgs.push('-map', '0', '-c', 'copy', '-id3v2_version', '3')
+    }
+    ffArgs.push(
+      '-metadata', `title=${videoTitle}`,
+      '-metadata', `artist=${channel}`,
+      '-metadata', `date=${year}`,
+      taggedMp3
+    )
+
+    await new Promise((resolve, reject) => {
+      const proc = spawn(ffmpegPath, ffArgs)
+      proc.on('close', code => {
+        if (code === 0 && fs.existsSync(taggedMp3)) {
+          fs.copyFileSync(taggedMp3, actualMp3)
+          try { fs.unlinkSync(taggedMp3) } catch (_) {}
+          resolve()
+        } else {
+          reject(new Error('ffmpeg tagging failed'))
+        }
+      })
+      proc.stderr.on('data', () => {})
+    })
+
+    if (thumbTmp) try { fs.unlinkSync(thumbTmp) } catch (_) {}
+
+    ytSetProgress(95, 'Adding to library…')
+
+    let coverUrl = null
+    let duration = 0
+    try {
+      const meta = await mm.parseFile(actualMp3, { duration: true, skipCovers: false })
+      duration = meta.format.duration || 0
+      const pic = meta.common?.picture?.[0]
+      if (pic) { const blob = new Blob([pic.data], { type: pic.format }); coverUrl = URL.createObjectURL(blob) }
+    } catch (_) {}
+
+    const newTrack = {
+      title: videoTitle, artist: channel, album: '', genre: '',
+      year, duration, path: actualMp3, coverUrl, replayGain: 0
+    }
+
+    if (targetPlaylistName && playlists[targetPlaylistName]) {
+      playlists[targetPlaylistName].push(newTrack)
+    } else {
+      const pname = 'lasts-player-downloads'
+      if (!playlists[pname]) playlists[pname] = []
+      playlists[pname].push(newTrack)
+      targetPlaylistName = pname
+    }
+
+    savePlaylists()
+    renderPlaylists()
+    loadPlaylist(targetPlaylistName)
+
+    ytSetProgress(100, '✓ Import complete!')
+    _ytImporting = false
+    setTimeout(() => { closeYtImport() }, 1200)
+
+  } catch (err) {
+    console.error('YouTube import failed:', err)
+    ytSetProgress(0, '✗ ' + (err.message || 'Import failed'))
+    _ytImporting = false
+    btn.disabled = false
+    btn.textContent = 'Import'
+  }
+}
+
+// ── Media Session API (Windows SMTC / hardware media keys) ───────────────
+function updateMediaSession(track) {
+  if (!('mediaSession' in navigator)) return
+  navigator.mediaSession.metadata = new MediaMetadata({
+    title:  track.title  || 'Unknown',
+    artist: track.artist || 'Unknown Artist',
+    album:  track.album  || '',
+    artwork: track.coverUrl
+      ? [{ src: track.coverUrl, sizes: '512x512', type: 'image/jpeg' }]
+      : []
+  })
+}
+
+function setupMediaSession() {
+  if (!('mediaSession' in navigator)) return
+
+  navigator.mediaSession.setActionHandler('play', () => {
+    if (currentSound && !currentSound.playing()) {
+      currentSound.play()
+    } else if (!currentSound) {
+      const target = currentPlaylist || viewedPlaylist
+      if (target && playlists[target]?.length > 0) {
+        playSong(currentTrackIndex >= 0 ? currentTrackIndex : 0, target)
+      }
+    }
+  })
+
+  navigator.mediaSession.setActionHandler('pause', () => {
+    if (currentSound && currentSound.playing()) currentSound.pause()
+  })
+
+  navigator.mediaSession.setActionHandler('stop', () => {
+    stopPlayback()
+  })
+
+  navigator.mediaSession.setActionHandler('nexttrack', () => {
+    nextSong()
+  })
+
+  navigator.mediaSession.setActionHandler('previoustrack', () => {
+    prevSong()
+  })
+
+  navigator.mediaSession.setActionHandler('seekto', (details) => {
+    if (currentSound && typeof details.seekTime === 'number') {
+      currentSound.seek(details.seekTime)
+    }
+  })
+}
+
+setupMediaSession()
+
+// ── Thumbar button IPC listeners ──────────────────────────────────────────
+const { ipcRenderer } = require('electron')
+ipcRenderer.on('media-play',  () => { if (!isPlaying) togglePlay() })
+ipcRenderer.on('media-pause', () => { if (isPlaying)  togglePlay() })
+ipcRenderer.on('media-next',  () => nextSong())
+ipcRenderer.on('media-prev',  () => prevSong())
 
 // ── Init ──────────────────────────────────────────────────
 loadPlaylists()
