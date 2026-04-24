@@ -19,6 +19,10 @@
     "files": [
       "**/*"
     ],
+    "asarUnpack": [
+      "node_modules/yt-dlp-exec/bin/**",
+      "node_modules/ffmpeg-static/**"
+    ],
     "win": {
       "target": "nsis",
       "icon": "./assets/favicon.ico",

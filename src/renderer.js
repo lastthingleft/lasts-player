@@ -2,17 +2,15 @@ const path = require('path')
 const fs = require('fs')
 const mm = require('music-metadata')
 
-// ── Constants ─────────────────────────────────────────────
 const LIKED_PLAYLIST = '❤️ Liked Songs'
 const DATA_PATH = path.join(require('@electron/remote').app.getPath('userData'), 'playlists.json')
 const SESSION_PATH = path.join(require('@electron/remote').app.getPath('userData'), 'session.json')
 const SCRIBE_DIR = path.join(require('@electron/remote').app.getPath('userData'), 'scribe')
 
-// ── State ─────────────────────────────────────────────────
 let playlists = {}
 let playlistCovers = {}
-let currentPlaylist = null      // the playlist that is PLAYING
-let viewedPlaylist = null       // the playlist currently VISIBLE in the right panel
+let currentPlaylist = null
+let viewedPlaylist = null
 let currentTrackIndex = -1
 let currentSound = null
 let isPlaying = false
@@ -24,25 +22,24 @@ let progressInterval = null
 let isDraggingProgress = false
 let isDraggingVol = false
 
-// ── Shuffle State ─────────────────────────────────────────
 let shuffleHistory = []
 let shuffleHistoryPos = -1
 let shuffleQueue = []
 
-// ── Search State ──────────────────────────────────────────
 let filterQuery = ''
 let filterOverall = false
 
-// ── Scribe State ──────────────────────────────────────────
 let scribeData = {}
 let lyricsVisible = false
 let lyricsSyncInterval = null
 let currentLyricIndex = -1
 
-// Ensure scribe dir exists
 if (!fs.existsSync(SCRIBE_DIR)) fs.mkdirSync(SCRIBE_DIR, { recursive: true })
 
-// ── SRT helpers ───────────────────────────────────────────
+function unpackedPath(p) {
+  return p.replace('app.asar', 'app.asar.unpacked')
+}
+
 function srtTimeToSeconds(t) {
   const m = t.match(/(\d+):(\d+):(\d+)[,.](\d+)/)
   if (!m) return 0
@@ -57,11 +54,7 @@ function parseSRT(raw) {
     if (lines.length < 3) continue
     const tc = lines[1].match(/(\S+)\s*-->\s*(\S+)/)
     if (!tc) continue
-    cues.push({
-      start: srtTimeToSeconds(tc[1]),
-      end:   srtTimeToSeconds(tc[2]),
-      text:  lines.slice(2).join('\n').trim()
-    })
+    cues.push({ start: srtTimeToSeconds(tc[1]), end: srtTimeToSeconds(tc[2]), text: lines.slice(2).join('\n').trim() })
   }
   return cues
 }
@@ -77,8 +70,7 @@ function loadScribeForTrack(trackPath) {
 }
 
 function saveScribeForTrack(trackPath, rawSRT) {
-  const file = scribeKeyFor(trackPath)
-  fs.writeFileSync(file, rawSRT, 'utf8')
+  fs.writeFileSync(scribeKeyFor(trackPath), rawSRT, 'utf8')
   scribeData[trackPath] = parseSRT(rawSRT)
 }
 
@@ -86,7 +78,6 @@ function hasScribe(trackPath) {
   return !!scribeData[trackPath] || fs.existsSync(scribeKeyFor(trackPath))
 }
 
-// ── Missing-file cleanup ──────────────────────────────────
 function pruneMissingTracks() {
   let changed = false
   for (const name of Object.keys(playlists)) {
@@ -96,10 +87,7 @@ function pruneMissingTracks() {
     if (playlists[name].length !== before) changed = true
   }
   pruneEmptyPlaylists()
-  if (changed) {
-    syncLikedPlaylist()
-    savePlaylists()
-  }
+  if (changed) { syncLikedPlaylist(); savePlaylists() }
   return changed
 }
 
@@ -109,11 +97,7 @@ function pruneEmptyPlaylists() {
     if (playlists[name].length === 0) {
       delete playlists[name]
       delete playlistCovers[name]
-      if (currentPlaylist === name) {
-        currentPlaylist = null
-        stopPlayback()
-        resetShuffleState()
-      }
+      if (currentPlaylist === name) { currentPlaylist = null; stopPlayback(); resetShuffleState() }
       if (viewedPlaylist === name) {
         viewedPlaylist = null
         document.getElementById('playlistTitle').textContent = 'Select a playlist'
@@ -127,40 +111,30 @@ function pruneEmptyPlaylists() {
 }
 
 function removeTrackFromLibrary(trackPath) {
-  const affected = []
   for (const [name, tracks] of Object.entries(playlists)) {
     if (name === LIKED_PLAYLIST) continue
-    const before = tracks.length
     playlists[name] = tracks.filter(t => t.path !== trackPath)
-    if (playlists[name].length !== before) affected.push(name)
   }
   likedSongs.delete(trackPath)
   pruneEmptyPlaylists()
   syncLikedPlaylist()
   savePlaylists()
-  return affected
 }
 
-// ── Mouse tracking ────────────────────────────────────────
 document.addEventListener('mousemove', e => {
-  const els = document.querySelectorAll(
-    '.pl-item, .ctrl-action-btn, .add-folder-btn, .track-row, .play-btn, .c-btn'
-  )
-  els.forEach(el => {
+  document.querySelectorAll('.pl-item, .ctrl-action-btn, .add-folder-btn, .track-row, .play-btn, .c-btn').forEach(el => {
     const r = el.getBoundingClientRect()
     el.style.setProperty('--mx', ((e.clientX - r.left) / r.width * 100).toFixed(1) + '%')
-    el.style.setProperty('--my', ((e.clientY - r.top)  / r.height * 100).toFixed(1) + '%')
+    el.style.setProperty('--my', ((e.clientY - r.top) / r.height * 100).toFixed(1) + '%')
   })
   if (isDraggingProgress) seekTo(e)
   if (isDraggingVol) setVol(e)
 })
 
-// ── Session persistence ───────────────────────────────────
 function saveSession() {
   try {
     const seek = (currentSound && currentSound.playing()) ? currentSound.seek() : 0
-    const session = { currentPlaylist, viewedPlaylist, currentTrackIndex, volume, seek: seek || 0 }
-    fs.writeFileSync(SESSION_PATH, JSON.stringify(session, null, 2), 'utf8')
+    fs.writeFileSync(SESSION_PATH, JSON.stringify({ currentPlaylist, viewedPlaylist, currentTrackIndex, volume, seek: seek || 0 }, null, 2), 'utf8')
   } catch (e) { console.error('Session save failed:', e) }
 }
 
@@ -174,7 +148,6 @@ function loadSession() {
 window.addEventListener('beforeunload', () => { saveSession() })
 setInterval(saveSession, 5000)
 
-// ── Persistence ───────────────────────────────────────────
 function savePlaylists() {
   try {
     const serialisable = {}
@@ -213,7 +186,6 @@ async function loadPlaylists() {
 
     const session = loadSession()
     if (session && session.currentPlaylist && playlists[session.currentPlaylist]) {
-      // Restore viewed playlist (may differ from playing playlist)
       const sessionViewed = session.viewedPlaylist && playlists[session.viewedPlaylist]
         ? session.viewedPlaylist
         : session.currentPlaylist
@@ -257,23 +229,23 @@ async function loadPlaylists() {
         currentSound.load()
       }
     } else if (Object.keys(playlists).length > 0) {
-      const first = Object.keys(playlists)[0]
-      loadPlaylist(first)
+      loadPlaylist(Object.keys(playlists)[0])
     }
   } catch (e) { console.error('Load failed:', e) }
 }
 
-// ── Helpers ───────────────────────────────────────────────
 function fmt(secs) {
   if (!secs || isNaN(secs)) return '0:00'
   const m = Math.floor(secs / 60), s = Math.floor(secs % 60)
   return `${m}:${s.toString().padStart(2, '0')}`
 }
+
 function totalRuntime(tracks) {
   const total = tracks.reduce((a, t) => a + (t.duration || 0), 0)
   const h = Math.floor(total / 3600), m = Math.floor((total % 3600) / 60)
   return h > 0 ? `${h}h ${m}m` : `${m} min`
 }
+
 function randomColor(str) {
   if (str === LIKED_PLAYLIST) return 'linear-gradient(135deg, rgba(255,91,127,0.3), rgba(255,130,80,0.18))'
   const colors = [
@@ -288,25 +260,24 @@ function randomColor(str) {
   for (let c of str) h = (h * 31 + c.charCodeAt(0)) % colors.length
   return colors[h]
 }
+
 function getTrackVolume(track) {
   if (track && typeof track.replayGain === 'number') {
-    const gain = track.replayGain
-    const linear = Math.pow(10, gain / 20)
-    return Math.min(1.0, Math.max(0.05, linear))
+    return Math.min(1.0, Math.max(0.05, Math.pow(10, track.replayGain / 20)))
   }
   return 1.0
 }
 
-// ── Search helpers ────────────────────────────────────────
 function escHtml(str) {
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')
 }
+
 function highlight(text, query) {
   if (!query) return escHtml(text)
   const escaped = escHtml(text)
-  const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return escaped.replace(new RegExp(`(${escapedQuery})`, 'gi'), '<mark class="sh">$1</mark>')
+  return escaped.replace(new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi'), '<mark class="sh">$1</mark>')
 }
+
 function trackMatchesQuery(track, query) {
   if (!query) return true
   const q = query.toLowerCase()
@@ -317,6 +288,7 @@ function trackMatchesQuery(track, query) {
     (track.genre  || '').toLowerCase().includes(q)
   )
 }
+
 function getFilteredTracks() {
   const q = filterQuery.trim()
   if (filterOverall && q) {
@@ -333,25 +305,25 @@ function getFilteredTracks() {
   return playlists[viewedPlaylist].map((track, i) => ({ track, playlistName: viewedPlaylist, originalIndex: i })).filter(({ track }) => trackMatchesQuery(track, q))
 }
 
-// ── Search UI handlers ────────────────────────────────────
 function onSearchInput(e) {
   filterQuery = e.target.value
   document.getElementById('searchInputWrap').classList.toggle('has-query', filterQuery.length > 0)
   renderTracks()
 }
+
 function clearSearch() {
   filterQuery = ''
   document.getElementById('searchInput').value = ''
   document.getElementById('searchInputWrap').classList.remove('has-query')
   renderTracks()
 }
+
 function onOverallToggle() {
   filterOverall = document.getElementById('overallToggle').checked
   document.getElementById('overallToggleLabel').classList.toggle('active', filterOverall)
   renderTracks()
 }
 
-// ── Song-switch animation ─────────────────────────────────
 function animateSongSwitch(track) {
   updateMediaSession(track)
   const coverEl = document.getElementById('coverArt')
@@ -385,14 +357,9 @@ function animateSongSwitch(track) {
   updateLikeBtn()
 }
 
-// ── Track-row state update ────────────────────────────────
 function updateTrackRowState() {
-  const rows = document.querySelectorAll('.track-row')
-  rows.forEach(row => {
-    const rowPlaylist = row.dataset.playlist
-    const rowIndex = parseInt(row.dataset.index, 10)
-    // Active only when BOTH the playlist AND index match the currently playing track
-    const isActive = rowPlaylist === currentPlaylist && rowIndex === currentTrackIndex
+  document.querySelectorAll('.track-row').forEach(row => {
+    const isActive = row.dataset.playlist === currentPlaylist && parseInt(row.dataset.index, 10) === currentTrackIndex
     row.classList.toggle('playing', isActive && isPlaying)
     const numDefault = row.querySelector('.num-default')
     const overlayIcon = row.querySelector('.overlay-icon')
@@ -404,7 +371,7 @@ function updateTrackRowState() {
       numDefault.innerHTML = `<span class="track-num-label active-num">▶</span>`
       if (overlayIcon) overlayIcon.innerHTML = `<svg viewBox="0 0 24 24" fill="white" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg>`
     } else {
-      numDefault.innerHTML = `<span class="track-num-label">${rowIndex + 1}</span>`
+      numDefault.innerHTML = `<span class="track-num-label">${parseInt(row.dataset.index, 10) + 1}</span>`
       if (overlayIcon) overlayIcon.innerHTML = `<svg viewBox="0 0 24 24" fill="white" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg>`
     }
     const titleEl = row.querySelector('.t-title')
@@ -417,7 +384,6 @@ function updateTrackRowState() {
   })
 }
 
-// ── Liked Songs ───────────────────────────────────────────
 function syncLikedPlaylist() {
   const liked = []
   for (const [name, tracks] of Object.entries(playlists)) {
@@ -434,17 +400,16 @@ function syncLikedPlaylist() {
         document.getElementById('runtime').textContent = '—'
         renderTracks()
       }
-      if (viewedPlaylist === LIKED_PLAYLIST) {
-        viewedPlaylist = null
-      }
+      if (viewedPlaylist === LIKED_PLAYLIST) viewedPlaylist = null
     }
-  } else { playlists[LIKED_PLAYLIST] = liked }
+  } else {
+    playlists[LIKED_PLAYLIST] = liked
+  }
   renderPlaylists()
   if (viewedPlaylist === LIKED_PLAYLIST) loadPlaylist(LIKED_PLAYLIST)
   savePlaylists()
 }
 
-// ── Shuffle helpers ───────────────────────────────────────
 function buildShuffleQueue(trackCount, excludeIndex) {
   const indices = []
   for (let i = 0; i < trackCount; i++) { if (i !== excludeIndex) indices.push(i) }
@@ -454,6 +419,7 @@ function buildShuffleQueue(trackCount, excludeIndex) {
   }
   return indices
 }
+
 function initShuffleState(currentIndex) {
   const tracks = playlists[currentPlaylist]
   if (!tracks) return
@@ -461,11 +427,11 @@ function initShuffleState(currentIndex) {
   shuffleHistory = currentIndex >= 0 ? [currentIndex] : []
   shuffleHistoryPos = shuffleHistory.length - 1
 }
+
 function resetShuffleState() {
   shuffleHistory = []; shuffleHistoryPos = -1; shuffleQueue = []
 }
 
-// ── Scribe btn ────────────────────────────────────────────
 function updateScribeBtn() {
   const btn = document.getElementById('scribeBtn')
   if (!btn) return
@@ -477,7 +443,6 @@ function updateScribeBtn() {
   btn.title = active ? 'View Lyrics (Scribe)' : 'No lyrics scribes for this track'
 }
 
-// ── Lyrics view ───────────────────────────────────────────
 function openLyricsView() {
   const track = currentPlaylist && currentTrackIndex >= 0 ? playlists[currentPlaylist]?.[currentTrackIndex] : null
   if (!track) return
@@ -487,12 +452,11 @@ function openLyricsView() {
 
   lyricsVisible = true
   const lyricsPanel = document.getElementById('lyricsPanel')
-  const trackList   = document.getElementById('trackList')
+  const trackList = document.getElementById('trackList')
   const trackHeader = document.querySelector('.track-header')
 
   renderLyricsLines(cues)
-  setLyricsBg(track)
-
+  lyricsPanel.style.background = 'linear-gradient(180deg, #1a1d24 0%, #13161b 100%)'
   lyricsPanel.style.display = 'flex'
   requestAnimationFrame(() => {
     lyricsPanel.classList.add('lyrics-visible')
@@ -500,38 +464,28 @@ function openLyricsView() {
     if (trackHeader) trackHeader.classList.add('tracklist-hidden')
   })
 
-  const btn = document.getElementById('scribeBtn')
-  if (btn) btn.classList.add('lyrics-open')
-
+  document.getElementById('scribeBtn')?.classList.add('lyrics-open')
   startLyricsSync(cues)
 }
 
 function closeLyricsView() {
   lyricsVisible = false
   const lyricsPanel = document.getElementById('lyricsPanel')
-  const trackList   = document.getElementById('trackList')
+  const trackList = document.getElementById('trackList')
   const trackHeader = document.querySelector('.track-header')
 
   lyricsPanel.classList.remove('lyrics-visible')
   trackList.classList.remove('tracklist-hidden')
   if (trackHeader) trackHeader.classList.remove('tracklist-hidden')
-
-  const btn = document.getElementById('scribeBtn')
-  if (btn) btn.classList.remove('lyrics-open')
+  document.getElementById('scribeBtn')?.classList.remove('lyrics-open')
 
   stopLyricsSync()
   currentLyricIndex = -1
-
   setTimeout(() => { lyricsPanel.style.display = 'none' }, 400)
 }
 
 function toggleLyricsView() {
-  if (lyricsVisible) { closeLyricsView() } else { openLyricsView() }
-}
-
-function setLyricsBg(track) {
-  const panel = document.getElementById('lyricsPanel')
-  panel.style.background = 'linear-gradient(180deg, #1a1d24 0%, #13161b 100%)'
+  lyricsVisible ? closeLyricsView() : openLyricsView()
 }
 
 function renderLyricsLines(cues) {
@@ -544,11 +498,7 @@ function renderLyricsLines(cues) {
     div.dataset.start = cue.start
     div.textContent = cue.text
     div.addEventListener('click', () => {
-      if (currentSound) {
-        currentSound.seek(cue.start)
-        currentLyricIndex = i
-        highlightLyric(i)
-      }
+      if (currentSound) { currentSound.seek(cue.start); currentLyricIndex = i; highlightLyric(i) }
     })
     container.appendChild(div)
   })
@@ -557,22 +507,16 @@ function renderLyricsLines(cues) {
 function startLyricsSync(cues) {
   stopLyricsSync()
   currentLyricIndex = -1
-  const LOOKAHEAD = 0.08
   lyricsSyncInterval = setInterval(() => {
     if (!currentSound || !lyricsVisible) return
     const seek = currentSound.seek()
     if (typeof seek !== 'number') return
-
-    const t = seek + LOOKAHEAD
+    const t = seek + 0.08
     let active = -1
     for (let i = 0; i < cues.length; i++) {
       if (t >= cues[i].start && t < cues[i].end) { active = i; break }
     }
-
-    if (active !== currentLyricIndex) {
-      currentLyricIndex = active
-      highlightLyric(active)
-    }
+    if (active !== currentLyricIndex) { currentLyricIndex = active; highlightLyric(active) }
   }, 50)
 }
 
@@ -589,32 +533,20 @@ function highlightLyric(index) {
     line.classList.toggle('lyric-active', i === index)
     line.classList.toggle('lyric-past', i < index)
   })
-  if (index >= 0 && lines[index]) {
-    lines[index].scrollIntoView({ behavior: 'smooth', block: 'center' })
-  }
+  if (index >= 0 && lines[index]) lines[index].scrollIntoView({ behavior: 'smooth', block: 'center' })
 }
 
-// ── Scribe Editor ─────────────────────────────────────────
 let scribeEditTarget = null
 
 function openScribeEditor(trackPath, trackTitle) {
   scribeEditTarget = trackPath
-  const existing = (() => {
-    const file = scribeKeyFor(trackPath)
-    if (fs.existsSync(file)) return fs.readFileSync(file, 'utf8')
-    return ''
-  })()
-
+  const file = scribeKeyFor(trackPath)
+  document.getElementById('scribeEditorTitle').textContent = `Scribe — ${trackTitle}`
+  document.getElementById('scribeTextarea').value = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : ''
   const editor = document.getElementById('scribeEditorBackdrop')
-  const textarea = document.getElementById('scribeTextarea')
-  const titleEl = document.getElementById('scribeEditorTitle')
-
-  titleEl.textContent = `Scribe — ${trackTitle}`
-  textarea.value = existing
-
   editor.style.display = 'flex'
   requestAnimationFrame(() => editor.classList.add('scribe-editor-visible'))
-  textarea.focus()
+  document.getElementById('scribeTextarea').focus()
 }
 
 function closeScribeEditor() {
@@ -633,7 +565,6 @@ function saveScribe() {
   closeScribeEditor()
 }
 
-// ── Metadata Editor ───────────────────────────────────────
 let _metaTrack = null
 let _metaPlaylistName = null
 let _metaOriginalIndex = null
@@ -653,11 +584,9 @@ function openMetadataEditor(track, playlistName, originalIndex) {
   document.getElementById('metaGenreInput').value  = track.genre  || ''
 
   const preview = document.getElementById('metaCoverPreview')
-  if (track.coverUrl) {
-    preview.innerHTML = `<img src="${track.coverUrl}" alt="cover">`
-  } else {
-    preview.innerHTML = `<div class="meta-cover-placeholder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg><span>Click to set cover</span></div>`
-  }
+  preview.innerHTML = track.coverUrl
+    ? `<img src="${track.coverUrl}" alt="cover">`
+    : `<div class="meta-cover-placeholder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg><span>Click to set cover</span></div>`
 
   const backdrop = document.getElementById('metaEditorBackdrop')
   backdrop.style.display = 'flex'
@@ -687,11 +616,8 @@ function onMetaCoverPicked(e) {
     document.getElementById('metaCoverPreview').innerHTML = `<img src="${_metaPendingCoverDataUrl}" alt="cover">`
   }
   reader.readAsDataURL(file)
-
   const bufReader = new FileReader()
-  bufReader.onload = ev2 => {
-    _metaPendingCoverBuffer = { data: Buffer.from(ev2.target.result), mime: file.type }
-  }
+  bufReader.onload = ev2 => { _metaPendingCoverBuffer = { data: Buffer.from(ev2.target.result), mime: file.type } }
   bufReader.readAsArrayBuffer(file)
   e.target.value = ''
 }
@@ -706,11 +632,7 @@ async function metaPasteCover() {
         const blob = await item.getType(imageType)
         const arrayBuffer = await blob.arrayBuffer()
         _metaPendingCoverBuffer = { data: Buffer.from(arrayBuffer), mime: imageType }
-        const dataUrl = await new Promise(res => {
-          const fr = new FileReader()
-          fr.onload = e => res(e.target.result)
-          fr.readAsDataURL(blob)
-        })
+        const dataUrl = await new Promise(res => { const fr = new FileReader(); fr.onload = e => res(e.target.result); fr.readAsDataURL(blob) })
         _metaPendingCoverDataUrl = dataUrl
         document.getElementById('metaCoverPreview').innerHTML = `<img src="${dataUrl}" alt="cover">`
         return
@@ -720,14 +642,11 @@ async function metaPasteCover() {
 }
 
 function showMetaCoverCtxMenu(e) {
-  e.preventDefault()
-  e.stopPropagation()
+  e.preventDefault(); e.stopPropagation()
   const menu = document.getElementById('metaCoverCtxMenu')
   menu.style.display = 'block'
-  const x = Math.min(e.clientX, window.innerWidth - 160)
-  const y = Math.min(e.clientY, window.innerHeight - 60)
-  menu.style.left = x + 'px'
-  menu.style.top  = y + 'px'
+  menu.style.left = Math.min(e.clientX, window.innerWidth - 160) + 'px'
+  menu.style.top  = Math.min(e.clientY, window.innerHeight - 60) + 'px'
 }
 
 document.addEventListener('mousedown', e => {
@@ -737,7 +656,6 @@ document.addEventListener('mousedown', e => {
 
 async function saveMetadata() {
   if (!_metaTrack) return
-
   const saveBtn = document.querySelector('#metaEditorBackdrop .modal-btn.primary')
   if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving…' }
 
@@ -750,9 +668,7 @@ async function saveMetadata() {
   const seekPos = wasPlaying && currentSound ? currentSound.seek() : 0
   if (wasPlaying && currentSound) currentSound.pause()
 
-  await writeTagsWithFfmpeg(_metaTrack.path, {
-    title: newTitle, artist: newArtist, year: newYear, genre: newGenre
-  }, _metaPendingCoverBuffer || null)
+  await writeTagsWithFfmpeg(_metaTrack.path, { title: newTitle, artist: newArtist, year: newYear, genre: newGenre }, _metaPendingCoverBuffer || null)
 
   for (const tracks of Object.values(playlists)) {
     for (const t of tracks) {
@@ -795,13 +711,7 @@ async function writeTagsWithFfmpeg(filePath, tags, coverBuf) {
 
     if (coverBuf) {
       if (ext === '.mp3') {
-        args.push(
-          '-map', '0:a', '-map', '1:v',
-          '-c:a', 'copy', '-c:v', 'mjpeg',
-          '-id3v2_version', '3',
-          '-metadata:s:v', 'title=Album cover',
-          '-metadata:s:v', 'comment=Cover (front)'
-        )
+        args.push('-map', '0:a', '-map', '1:v', '-c:a', 'copy', '-c:v', 'mjpeg', '-id3v2_version', '3', '-metadata:s:v', 'title=Album cover', '-metadata:s:v', 'comment=Cover (front)')
       } else if (ext === '.flac') {
         args.push('-map', '0:a', '-map', '1:v', '-c', 'copy')
       } else if (ext === '.m4a' || ext === '.aac') {
@@ -817,21 +727,16 @@ async function writeTagsWithFfmpeg(filePath, tags, coverBuf) {
     if (tags.artist) args.push('-metadata', `artist=${tags.artist}`)
     if (tags.year)   args.push('-metadata', `date=${tags.year}`)
     if (tags.genre)  args.push('-metadata', `genre=${tags.genre}`)
-
     args.push(tmp)
 
     const { spawn } = require('child_process')
-    const ffmpegPath = require('ffmpeg-static')
+    const ffmpegPath = unpackedPath(require('ffmpeg-static'))
     const proc = spawn(ffmpegPath, args)
-
     proc.stderr.on('data', d => { stderrLog += d.toString() })
     proc.on('close', (code) => {
       try {
-        if (code === 0 && fs.existsSync(tmp)) {
-          fs.copyFileSync(tmp, filePath)
-        } else {
-          console.error('ffmpeg failed (code', code, ')\n', stderrLog)
-        }
+        if (code === 0 && fs.existsSync(tmp)) fs.copyFileSync(tmp, filePath)
+        else console.error('ffmpeg failed (code', code, ')\n', stderrLog)
       } catch (e) { console.error('File replace failed:', e) }
       finally {
         try { fs.unlinkSync(tmp) } catch (_) {}
@@ -842,17 +747,13 @@ async function writeTagsWithFfmpeg(filePath, tags, coverBuf) {
   })
 }
 
-// ── Track Context Menu ────────────────────────────────────
 let _ctxMenuTrack = null
 
 function showTrackCtxMenu(e, track, playlistName, originalIndex) {
-  e.preventDefault()
-  e.stopPropagation()
+  e.preventDefault(); e.stopPropagation()
   _ctxMenuTrack = track
   const menu = document.getElementById('ctxMenu')
   const scribes = hasScribe(track.path)
-
-  // "Move To" never appears for Liked Songs; exclude current playlist and Liked Songs from targets
   const moveTargets = playlistName === LIKED_PLAYLIST
     ? []
     : Object.keys(playlists).filter(n => n !== LIKED_PLAYLIST && n !== playlistName)
@@ -861,55 +762,30 @@ function showTrackCtxMenu(e, track, playlistName, originalIndex) {
   if (moveTargets.length > 0) {
     moveToHtml = `
       <div class="ctx-item ctx-has-sub" id="ctxMoveToItem">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-          <polyline points="14 2 14 8 20 8"/>
-          <line x1="12" y1="18" x2="12" y2="12"/>
-          <line x1="9" y1="15" x2="15" y2="15"/>
-        </svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
         Move To
-        <svg class="ctx-sub-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="9" height="9" style="margin-left:auto;opacity:0.5">
-          <polyline points="9 18 15 12 9 6"/>
-        </svg>
+        <svg class="ctx-sub-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="9" height="9" style="margin-left:auto;opacity:0.5"><polyline points="9 18 15 12 9 6"/></svg>
         <div class="ctx-submenu" id="ctxMoveSubmenu">
-          ${moveTargets.map(n => `
-            <div class="ctx-item ctx-sub-item" data-target="${escHtml(n)}">
-              <div class="pl-thumb" style="width:18px;height:18px;border-radius:4px;background:${randomColor(n)};display:inline-flex;align-items:center;justify-content:center;font-size:9px;flex-shrink:0">♪</div>
-              ${escHtml(n)}
-            </div>
-          `).join('')}
+          ${moveTargets.map(n => `<div class="ctx-item ctx-sub-item" data-target="${escHtml(n)}"><div class="pl-thumb" style="width:18px;height:18px;border-radius:4px;background:${randomColor(n)};display:inline-flex;align-items:center;justify-content:center;font-size:9px;flex-shrink:0">♪</div>${escHtml(n)}</div>`).join('')}
         </div>
-      </div>
-    `
+      </div>`
   }
 
   menu.innerHTML = `
     <div class="ctx-item" id="ctxScribeItem">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M12 20h9"/>
-        <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
-      </svg>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
       ${scribes ? 'Edit Scribe' : 'Scribe'}
     </div>
     <div class="ctx-item" id="ctxMetaItem">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <circle cx="12" cy="12" r="3"/>
-        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-      </svg>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       Edit Metadata
     </div>
     ${moveToHtml}
     <div class="ctx-divider"></div>
     <div class="ctx-item danger" id="ctxDeleteItem">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <polyline points="3 6 5 6 21 6"/>
-        <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-        <path d="M10 11v6"/><path d="M14 11v6"/>
-        <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
-      </svg>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
       Delete File…
-    </div>
-  `
+    </div>`
 
   document.getElementById('ctxScribeItem').addEventListener('click', () => {
     menu.style.display = 'none'
@@ -924,37 +800,26 @@ function showTrackCtxMenu(e, track, playlistName, originalIndex) {
     if (_ctxMenuTrack) openDeleteConfirm(_ctxMenuTrack)
   })
 
-  const submenu = document.getElementById('ctxMoveSubmenu')
-  if (submenu) {
-    submenu.querySelectorAll('.ctx-sub-item').forEach(item => {
-      item.addEventListener('click', e => {
-        e.stopPropagation()
-        menu.style.display = 'none'
-        if (_ctxMenuTrack) doMoveTrack(_ctxMenuTrack, playlistName, item.dataset.target)
-      })
+  document.getElementById('ctxMoveSubmenu')?.querySelectorAll('.ctx-sub-item').forEach(item => {
+    item.addEventListener('click', e => {
+      e.stopPropagation()
+      menu.style.display = 'none'
+      if (_ctxMenuTrack) doMoveTrack(_ctxMenuTrack, playlistName, item.dataset.target)
     })
-  }
+  })
 
   menu.style.display = 'block'
-  const x = Math.min(e.clientX, window.innerWidth - 220)
-  const y = Math.min(e.clientY, window.innerHeight - 180)
-  menu.style.left = x + 'px'
-  menu.style.top = y + 'px'
+  menu.style.left = Math.min(e.clientX, window.innerWidth - 220) + 'px'
+  menu.style.top  = Math.min(e.clientY, window.innerHeight - 180) + 'px'
 }
 
-// ── Move Track ────────────────────────────────────────────
 async function doMoveTrack(track, fromPlaylist, toPlaylist) {
   if (!playlists[toPlaylist]) return
-
   const os = require('os')
   const targetTracks = playlists[toPlaylist]
-  let targetDir
-  if (targetTracks.length > 0) {
-    targetDir = path.dirname(targetTracks[0].path)
-  } else {
-    targetDir = path.join(os.homedir(), 'Music', 'lasts-player-downloads')
-    if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true })
-  }
+  let targetDir = targetTracks.length > 0
+    ? path.dirname(targetTracks[0].path)
+    : (() => { const d = path.join(os.homedir(), 'Music', 'lasts-player-downloads'); if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); return d })()
 
   const fileName = path.basename(track.path)
   let destPath = path.join(targetDir, fileName)
@@ -963,8 +828,7 @@ async function doMoveTrack(track, fromPlaylist, toPlaylist) {
     removeTrackFromLibrary(track.path)
     if (!playlists[toPlaylist]) playlists[toPlaylist] = []
     playlists[toPlaylist].push({ ...track })
-    savePlaylists()
-    renderPlaylists()
+    savePlaylists(); renderPlaylists()
     if (viewedPlaylist) loadPlaylist(viewedPlaylist)
     return
   }
@@ -975,50 +839,33 @@ async function doMoveTrack(track, fromPlaylist, toPlaylist) {
   }
 
   try {
-    try {
-      fs.renameSync(track.path, destPath)
-    } catch (_) {
-      fs.copyFileSync(track.path, destPath)
-      fs.unlinkSync(track.path)
-    }
-  } catch (err) {
-    console.error('Move failed:', err)
-    return
-  }
+    try { fs.renameSync(track.path, destPath) }
+    catch (_) { fs.copyFileSync(track.path, destPath); fs.unlinkSync(track.path) }
+  } catch (err) { console.error('Move failed:', err); return }
 
-  const wasCurrentTrack = currentPlaylist === fromPlaylist && playlists[fromPlaylist]?.[currentTrackIndex]?.path === track.path
-  if (wasCurrentTrack) {
+  if (currentPlaylist === fromPlaylist && playlists[fromPlaylist]?.[currentTrackIndex]?.path === track.path) {
     stopPlayback()
     if (lyricsVisible) closeLyricsView()
   }
 
   removeTrackFromLibrary(track.path)
-
   if (!playlists[toPlaylist]) playlists[toPlaylist] = []
   playlists[toPlaylist].push({ ...track, path: destPath })
 
-  savePlaylists()
-  renderPlaylists()
+  savePlaylists(); renderPlaylists()
   if (viewedPlaylist) loadPlaylist(viewedPlaylist)
 }
 
-// ── Delete Confirm Modal ──────────────────────────────────
 let _deleteTarget = null
 
 function openDeleteConfirm(track) {
   _deleteTarget = track
-  const modal = document.getElementById('deleteConfirmBackdrop')
-  const nameEl = document.getElementById('deleteConfirmName')
-  const artistEl = document.getElementById('deleteConfirmArtist')
-  const pathEl = document.getElementById('deleteConfirmPath')
-
-  nameEl.textContent = track.title || path.basename(track.path)
-  artistEl.textContent = track.artist || '—'
-  pathEl.textContent = track.path
-
+  document.getElementById('deleteConfirmName').textContent = track.title || path.basename(track.path)
+  document.getElementById('deleteConfirmArtist').textContent = track.artist || '—'
+  document.getElementById('deleteConfirmPath').textContent = track.path
   document.getElementById('deleteStep1').style.display = 'flex'
   document.getElementById('deleteStep2').style.display = 'none'
-
+  const modal = document.getElementById('deleteConfirmBackdrop')
   modal.style.display = 'flex'
   requestAnimationFrame(() => modal.classList.add('delete-confirm-visible'))
 }
@@ -1040,8 +887,7 @@ async function confirmDeleteFile() {
   const track = _deleteTarget
   closeDeleteConfirm()
 
-  const wasCurrentTrack = currentPlaylist && playlists[currentPlaylist]?.[currentTrackIndex]?.path === track.path
-  if (wasCurrentTrack) {
+  if (currentPlaylist && playlists[currentPlaylist]?.[currentTrackIndex]?.path === track.path) {
     stopPlayback()
     if (lyricsVisible) closeLyricsView()
     document.getElementById('songName').textContent = 'No song playing'
@@ -1061,39 +907,21 @@ async function confirmDeleteFile() {
 
   try {
     if (fs.existsSync(track.path)) fs.unlinkSync(track.path)
-  } catch (err) {
-    console.error('File delete failed:', err)
-  }
+  } catch (err) { console.error('File delete failed:', err) }
 
   renderPlaylists()
-  if (viewedPlaylist && playlists[viewedPlaylist]) {
-    loadPlaylist(viewedPlaylist)
-  } else {
-    renderTracks()
-  }
+  if (viewedPlaylist && playlists[viewedPlaylist]) loadPlaylist(viewedPlaylist)
+  else renderTracks()
   updateScribeBtn()
 }
 
-// ── Playback ──────────────────────────────────────────────
-// BUG FIX: playSong now always requires an explicit fromPlaylist argument when
-// called from outside playback continuation (nextSong/prevSong). This ensures
-// that double-clicking Playlist 2 always plays Playlist 2's tracks, never the
-// previously-playing Playlist 1's tracks.
 function playSong(index, fromPlaylist) {
-  // fromPlaylist must be provided when initiating playback from a track row or
-  // playlist double-click. Fall back to currentPlaylist only for internal
-  // continuation calls (nextSong, prevSong, repeat) where fromPlaylist is omitted.
   const targetPlaylist = fromPlaylist || currentPlaylist
   if (!targetPlaylist) return
   const tracks = playlists[targetPlaylist]
   if (!tracks || index < 0 || index >= tracks.length) return
 
-  // Update which playlist is PLAYING — this is the critical line.
-  // Before this fix, currentPlaylist was still the old playlist when nextSong()
-  // or playSong(0) ran after a double-click, so tracks were pulled from the
-  // wrong list.
   currentPlaylist = targetPlaylist
-
   if (currentSound) { currentSound.stop(); currentSound.unload(); clearInterval(progressInterval) }
   if (lyricsVisible) closeLyricsView()
 
@@ -1104,9 +932,7 @@ function playSong(index, fromPlaylist) {
   updateTrackRowState()
   updateScribeBtn()
 
-  const trackVol = getTrackVolume(track)
-  const effectiveVol = Math.min(1.0, volume * trackVol)
-
+  const effectiveVol = Math.min(1.0, volume * getTrackVolume(track))
   currentSound = new Howl({
     src: [track.path], html5: true, volume: effectiveVol,
     onload() {
@@ -1124,10 +950,6 @@ function playSong(index, fromPlaylist) {
   currentSound.play()
   document.getElementById('progressFill').style.width = '0%'
   document.getElementById('currentTime').textContent = '0:00'
-
-  // Re-render tracks so the playing highlight updates in whichever playlist
-  // is currently being viewed (may differ from the one now playing)
-  renderTracks()
 }
 
 function updateProgress() {
@@ -1144,33 +966,27 @@ function updateNowPlayingUI(track) {
   document.getElementById('genreName').textContent = track.genre || track.album || '—'
   document.getElementById('totalTime').textContent = fmt(track.duration || 0)
   updateLikeBtn()
-  const coverArt = document.getElementById('coverArt')
-  coverArt.innerHTML = track.coverUrl
+  document.getElementById('coverArt').innerHTML = track.coverUrl
     ? `<img src="${track.coverUrl}" alt="cover">`
     : `<div class="cover-placeholder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>`
 }
 
 function togglePlay() {
   if (!currentSound) {
-    // BUG FIX: use viewedPlaylist as fallback so clicking play when nothing
-    // is loaded starts the viewed playlist, not a null/stale one
     const target = currentPlaylist || viewedPlaylist
-    if (target && playlists[target]?.length > 0) {
-      playSong(currentTrackIndex >= 0 ? currentTrackIndex : 0, target)
-    }
+    if (target && playlists[target]?.length > 0) playSong(currentTrackIndex >= 0 ? currentTrackIndex : 0, target)
     return
   }
   currentSound.playing() ? currentSound.pause() : currentSound.play()
 }
 
 function updatePlayBtn() {
-  if ('mediaSession' in navigator) {
-    navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused'
-  }
+  if ('mediaSession' in navigator) navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused'
   require('electron').ipcRenderer.send('update-play-state', isPlaying)
   const icon = document.getElementById('playIcon')
-  if (isPlaying) { icon.innerHTML = '<rect x="6" y="4" width="4" height="16" rx="1.5"/><rect x="14" y="4" width="4" height="16" rx="1.5"/>' }
-  else { icon.innerHTML = '<polygon points="5 3 19 12 5 21 5 3"/>' }
+  icon.innerHTML = isPlaying
+    ? '<rect x="6" y="4" width="4" height="16" rx="1.5"/><rect x="14" y="4" width="4" height="16" rx="1.5"/>'
+    : '<polygon points="5 3 19 12 5 21 5 3"/>'
   const btn = document.getElementById('playBtn')
   btn.style.transform = 'scale(0.9)'
   setTimeout(() => { btn.style.transform = '' }, 150)
@@ -1200,7 +1016,6 @@ function prevSong() {
   if (!currentPlaylist) return
   const tracks = playlists[currentPlaylist]
   if (!tracks?.length) return
-  // BUG FIX: check seek() returns a number before comparing
   const seek = currentSound ? currentSound.seek() : 0
   if (typeof seek === 'number' && seek > 3) { currentSound.seek(0); return }
   if (isShuffle) {
@@ -1224,8 +1039,7 @@ function toggleShuffle() {
   btn.classList.toggle('active', isShuffle)
   btn.style.transform = 'scale(0.9)'
   setTimeout(() => { btn.style.transform = '' }, 200)
-  if (isShuffle) initShuffleState(currentTrackIndex)
-  else resetShuffleState()
+  isShuffle ? initShuffleState(currentTrackIndex) : resetShuffleState()
 }
 
 function toggleRepeat() {
@@ -1244,51 +1058,39 @@ function likeSong() {
   setTimeout(() => btn.classList.remove('pop'), 400)
   renderTracks()
 }
+
 function _toggleLikePath(trackPath) {
   likedSongs.has(trackPath) ? likedSongs.delete(trackPath) : likedSongs.add(trackPath)
   syncLikedPlaylist()
 }
+
 function updateLikeBtn() {
   if (!currentPlaylist || currentTrackIndex < 0) return
   const track = playlists[currentPlaylist]?.[currentTrackIndex]
   if (!track) return
   const liked = likedSongs.has(track.path)
-  const btn = document.getElementById('likeBtn'), icon = document.getElementById('likeIcon')
-  btn.classList.toggle('liked', liked)
-  icon.setAttribute('fill', liked ? 'var(--like)' : 'none')
+  document.getElementById('likeBtn').classList.toggle('liked', liked)
+  document.getElementById('likeIcon').setAttribute('fill', liked ? 'var(--like)' : 'none')
 }
 
-// ── Keyboard shortcuts (including media keys) ─────────────
 document.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
-
   switch (e.code) {
-    case 'Space':
-      e.preventDefault(); togglePlay(); break
-    case 'MediaPlayPause':
-      e.preventDefault(); togglePlay(); break
-    case 'MediaNextTrack':
-      e.preventDefault(); nextSong(); break
-    case 'MediaPreviousTrack':
-      e.preventDefault(); prevSong(); break
-    case 'MediaStop':
-      e.preventDefault(); stopPlayback(); break
-    case 'Escape':
-      if (lyricsVisible) closeLyricsView(); break
-    case 'ArrowRight':
-      if (e.altKey || e.metaKey) { e.preventDefault(); nextSong() } break
-    case 'ArrowLeft':
-      if (e.altKey || e.metaKey) { e.preventDefault(); prevSong() } break
+    case 'Space': e.preventDefault(); togglePlay(); break
+    case 'MediaPlayPause': e.preventDefault(); togglePlay(); break
+    case 'MediaNextTrack': e.preventDefault(); nextSong(); break
+    case 'MediaPreviousTrack': e.preventDefault(); prevSong(); break
+    case 'MediaStop': e.preventDefault(); stopPlayback(); break
+    case 'Escape': if (lyricsVisible) closeLyricsView(); break
+    case 'ArrowRight': if (e.altKey || e.metaKey) { e.preventDefault(); nextSong() } break
+    case 'ArrowLeft': if (e.altKey || e.metaKey) { e.preventDefault(); prevSong() } break
     case 'ArrowUp':
       if (e.altKey || e.metaKey) {
         e.preventDefault()
         volume = Math.min(1, volume + 0.05)
         document.getElementById('volFill').style.height = (volume * 100).toFixed(1) + '%'
         Howler.volume(volume)
-        if (currentSound) {
-          const track = playlists[currentPlaylist]?.[currentTrackIndex]
-          currentSound.volume(Math.min(1, volume * getTrackVolume(track)))
-        }
+        if (currentSound) { const t = playlists[currentPlaylist]?.[currentTrackIndex]; currentSound.volume(Math.min(1, volume * getTrackVolume(t))) }
       }
       break
     case 'ArrowDown':
@@ -1297,16 +1099,12 @@ document.addEventListener('keydown', e => {
         volume = Math.max(0, volume - 0.05)
         document.getElementById('volFill').style.height = (volume * 100).toFixed(1) + '%'
         Howler.volume(volume)
-        if (currentSound) {
-          const track = playlists[currentPlaylist]?.[currentTrackIndex]
-          currentSound.volume(Math.min(1, volume * getTrackVolume(track)))
-        }
+        if (currentSound) { const t = playlists[currentPlaylist]?.[currentTrackIndex]; currentSound.volume(Math.min(1, volume * getTrackVolume(t))) }
       }
       break
   }
 })
 
-// ── Folder import ─────────────────────────────────────────
 async function addFolder() {
   const { dialog } = require('@electron/remote')
   const result = await dialog.showOpenDialog({ properties: ['openDirectory'] })
@@ -1339,7 +1137,6 @@ async function addFolder() {
   renderPlaylists(); loadPlaylist(folderName); savePlaylists()
 }
 
-// ── Render ────────────────────────────────────────────────
 function renderPlaylists() {
   const list = document.getElementById('playlistList')
   list.innerHTML = ''
@@ -1350,14 +1147,8 @@ function renderPlaylists() {
     div.className = 'pl-item' + (name === viewedPlaylist ? ' active' : '')
     div.dataset.name = name
     div.style.animation = `rowFadeIn 0.3s cubic-bezier(0.16,1,0.3,1) ${idx * 0.04}s both`
-    
     div.onclick = () => loadPlaylist(name)
-
-    div.ondblclick = () => {
-      loadPlaylist(name)         // updates viewedPlaylist & re-renders track list
-      playSong(0, name)          // ← pass name explicitly, not currentPlaylist
-    }
-
+    div.ondblclick = () => { loadPlaylist(name); playSong(0, name) }
     div.oncontextmenu = (e) => showPlaylistCtxMenu(e, name)
     const grad = randomColor(name)
     const customCover = playlistCovers[name]
@@ -1369,13 +1160,11 @@ function renderPlaylists() {
       <div class="pl-info">
         <div class="pl-name">${name}</div>
         <div class="pl-count">${playlists[name].length} songs</div>
-      </div>
-    `
+      </div>`
     list.appendChild(div)
   })
 }
 
-// loadPlaylist updates viewedPlaylist only — never currentPlaylist
 function loadPlaylist(name) {
   if (!playlists[name]) return
   viewedPlaylist = name
@@ -1383,17 +1172,12 @@ function loadPlaylist(name) {
   document.getElementById('playlistTitle').textContent = name
   document.getElementById('songCount').textContent = `${tracks.length} songs`
   document.getElementById('runtime').textContent = totalRuntime(tracks)
-  const genres = [...new Set(tracks.map(t => t.genre).filter(Boolean))].slice(0, 3)
-  document.getElementById('playlistGenre').textContent = genres.join(' · ')
+  document.getElementById('playlistGenre').textContent = [...new Set(tracks.map(t => t.genre).filter(Boolean))].slice(0, 3).join(' · ')
   if (isShuffle && currentPlaylist === name) {
     initShuffleState(currentTrackIndex >= 0 && currentTrackIndex < tracks.length ? currentTrackIndex : -1)
   }
   renderTracks()
-
-  // ── Just swap the .active class, don't re-render the whole sidebar ──
-  document.querySelectorAll('.pl-item').forEach(el => {
-    el.classList.toggle('active', el.dataset.name === name)
-  })
+  document.querySelectorAll('.pl-item').forEach(el => el.classList.toggle('active', el.dataset.name === name))
 }
 
 function renderTracks() {
@@ -1415,10 +1199,7 @@ function renderTracks() {
   if (isSearching && filtered.length === 0) {
     list.innerHTML = `
       <div class="search-no-results">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <circle cx="11" cy="11" r="8"/>
-          <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-        </svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         <p>No results for "${escHtml(q)}"</p>
         <span>${isOverall ? 'No tracks match across any playlist' : 'Try searching Overall to look everywhere'}</span>
       </div>`
@@ -1426,9 +1207,7 @@ function renderTracks() {
   }
 
   list.innerHTML = ''
-
   filtered.forEach(({ track, playlistName, originalIndex }) => {
-    // isActive: only highlight the track that is ACTUALLY playing
     const isActive = playlistName === currentPlaylist && originalIndex === currentTrackIndex
     const liked = likedSongs.has(track.path)
 
@@ -1436,10 +1215,7 @@ function renderTracks() {
     div.className = 'track-row' + (isActive && isPlaying ? ' playing' : '')
     div.dataset.playlist = playlistName
     div.dataset.index = originalIndex
-
-    // BUG FIX: double-click on a track row must pass playlistName explicitly
     div.ondblclick = () => playSong(originalIndex, playlistName)
-
     div.oncontextmenu = (e) => showTrackCtxMenu(e, track, playlistName, originalIndex)
 
     const artCell = track.coverUrl
@@ -1447,16 +1223,9 @@ function renderTracks() {
       : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>`
 
     let numCell
-    if (isActive && isPlaying) {
-      numCell = `<div class="playing-bars"><span></span><span></span><span></span><span></span></div>`
-    } else if (isActive && !isPlaying) {
-      numCell = `<span class="track-num-label active-num">▶</span>`
-    } else {
-      numCell = `<span class="track-num-label">${originalIndex + 1}</span>`
-    }
-
-    const titleHtml  = highlight(track.title  || 'Unknown', q)
-    const artistHtml = highlight(track.artist || 'Unknown Artist', q)
+    if (isActive && isPlaying) numCell = `<div class="playing-bars"><span></span><span></span><span></span><span></span></div>`
+    else if (isActive && !isPlaying) numCell = `<span class="track-num-label active-num">▶</span>`
+    else numCell = `<span class="track-num-label">${originalIndex + 1}</span>`
 
     div.innerHTML = `
       <div class="t-num">
@@ -1474,8 +1243,8 @@ function renderTracks() {
       <div class="t-info">
         <div class="t-mini-art">${artCell}</div>
         <div style="min-width:0">
-          <div class="t-title" style="${isActive && isPlaying ? 'color:var(--accent)' : ''}">${titleHtml}</div>
-          <div class="t-artist">${artistHtml}</div>
+          <div class="t-title" style="${isActive && isPlaying ? 'color:var(--accent)' : ''}">${highlight(track.title || 'Unknown', q)}</div>
+          <div class="t-artist">${highlight(track.artist || 'Unknown Artist', q)}</div>
           ${isOverall ? `<span class="t-source-badge">${escHtml(playlistName)}</span>` : ''}
         </div>
       </div>
@@ -1488,11 +1257,9 @@ function renderTracks() {
         <svg viewBox="0 0 24 24" fill="${liked ? 'var(--like)' : 'none'}" stroke="currentColor" stroke-width="2">
           <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
         </svg>
-      </div>
-    `
+      </div>`
 
-    const numArea = div.querySelector('.t-num')
-    numArea.addEventListener('click', e => {
+    div.querySelector('.t-num').addEventListener('click', e => {
       e.stopPropagation()
       if (playlistName === currentPlaylist && originalIndex === currentTrackIndex) {
         togglePlay()
@@ -1507,11 +1274,11 @@ function renderTracks() {
       }
     })
 
-    const likeEl = div.querySelector('.t-like')
-    likeEl.addEventListener('click', e => {
+    div.querySelector('.t-like').addEventListener('click', e => {
       e.stopPropagation()
-      likeEl.classList.add('pop')
-      setTimeout(() => likeEl.classList.remove('pop'), 400)
+      const el = e.currentTarget
+      el.classList.add('pop')
+      setTimeout(() => el.classList.remove('pop'), 400)
       _toggleLikePath(track.path)
       renderTracks(); updateLikeBtn()
     })
@@ -1520,13 +1287,6 @@ function renderTracks() {
   })
 }
 
-function toggleLike(e, trackPath) {
-  e.stopPropagation()
-  _toggleLikePath(trackPath)
-  renderTracks(); updateLikeBtn()
-}
-
-// ── Playlist context menu ─────────────────────────────────
 function showPlaylistCtxMenu(e, name) {
   e.preventDefault()
   const menu = document.getElementById('ctxMenu')
@@ -1539,37 +1299,28 @@ function showPlaylistCtxMenu(e, name) {
     <div class="ctx-item danger" onclick="deletePlaylist('${name.replace(/\\/g,'\\\\').replace(/'/g,"\\'")}')">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
       Remove Playlist
-    </div>
-  `
+    </div>`
   menu.style.display = 'block'
-  const x = Math.min(e.clientX, window.innerWidth - 180)
-  const y = Math.min(e.clientY, window.innerHeight - 80)
-  menu.style.left = x + 'px'
-  menu.style.top = y + 'px'
+  menu.style.left = Math.min(e.clientX, window.innerWidth - 180) + 'px'
+  menu.style.top  = Math.min(e.clientY, window.innerHeight - 80) + 'px'
 }
 
 document.addEventListener('click', e => {
   const menu = document.getElementById('ctxMenu')
-  if (menu && !menu.contains(e.target)) {
-    menu.style.display = 'none'
-  }
+  if (menu && !menu.contains(e.target)) menu.style.display = 'none'
   if (_importDropdownOpen) closeImportDropdown()
 })
 
 document.addEventListener('mousedown', e => {
   const menu = document.getElementById('ctxMenu')
-  if (menu && menu.style.display !== 'none' && !menu.contains(e.target)) {
-    menu.style.display = 'none'
-  }
+  if (menu && menu.style.display !== 'none' && !menu.contains(e.target)) menu.style.display = 'none'
 })
 
 function deletePlaylist(name) {
   document.getElementById('ctxMenu').style.display = 'none'
   if (!playlists[name]) return
   delete playlists[name]; delete playlistCovers[name]
-  if (currentPlaylist === name) {
-    currentPlaylist = null; stopPlayback(); resetShuffleState()
-  }
+  if (currentPlaylist === name) { currentPlaylist = null; stopPlayback(); resetShuffleState() }
   if (viewedPlaylist === name) {
     viewedPlaylist = null
     document.getElementById('playlistTitle').textContent = 'Select a playlist'
@@ -1581,7 +1332,6 @@ function deletePlaylist(name) {
   renderPlaylists(); savePlaylists()
 }
 
-// ── Edit Playlist Modal ───────────────────────────────────
 let editingPlaylist = null
 let pendingCoverDataUrl = null
 
@@ -1589,15 +1339,17 @@ function openEditModal(name) {
   document.getElementById('ctxMenu').style.display = 'none'
   editingPlaylist = name; pendingCoverDataUrl = null
   document.getElementById('modalNameInput').value = name
-  const preview = document.getElementById('modalCoverPreview')
   const existing = playlistCovers[name]
-  preview.innerHTML = existing
+  document.getElementById('modalCoverPreview').innerHTML = existing
     ? `<img src="${existing}" alt="">`
     : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>`
   document.getElementById('editModal').style.display = 'flex'
 }
+
 function closeModal() { document.getElementById('editModal').style.display = 'none'; editingPlaylist = null; pendingCoverDataUrl = null }
+
 function pickCover() { document.getElementById('coverFilePicker').click() }
+
 function onCoverPicked(e) {
   const file = e.target.files[0]; if (!file) return
   const reader = new FileReader()
@@ -1607,6 +1359,7 @@ function onCoverPicked(e) {
   }
   reader.readAsDataURL(file); e.target.value = ''
 }
+
 function savePlaylistEdit() {
   if (!editingPlaylist) return
   const newName = document.getElementById('modalNameInput').value.trim()
@@ -1623,7 +1376,6 @@ function savePlaylistEdit() {
   closeModal(); renderPlaylists(); savePlaylists()
 }
 
-// ── Progress ──────────────────────────────────────────────
 const progressTrack = document.getElementById('progressTrack')
 progressTrack.addEventListener('mousedown', e => { isDraggingProgress = true; seekTo(e) })
 document.addEventListener('mouseup', () => { isDraggingProgress = false; isDraggingVol = false })
@@ -1637,7 +1389,6 @@ function seekTo(e) {
   document.getElementById('currentTime').textContent = fmt(pct * currentSound.duration())
 }
 
-// ── Volume ────────────────────────────────────────────────
 const volTrack = document.getElementById('volTrack')
 volTrack.addEventListener('mousedown', e => { isDraggingVol = true; setVol(e) })
 
@@ -1649,22 +1400,18 @@ function setVol(e) {
   Howler.volume(pct)
   if (currentSound) {
     const track = playlists[currentPlaylist]?.[currentTrackIndex]
-    const trackVol = track ? getTrackVolume(track) : 1
-    currentSound.volume(Math.min(1, pct * trackVol))
+    currentSound.volume(Math.min(1, pct * getTrackVolume(track)))
   }
   saveSession()
 }
 document.getElementById('volFill').style.height = (volume * 100) + '%'
 
-// ── Search input listener ─────────────────────────────────
 document.getElementById('searchInput').addEventListener('input', onSearchInput)
 
-// ── Window controls ───────────────────────────────────────
 function minimizeWindow() { require('@electron/remote').getCurrentWindow().minimize() }
 function maximizeWindow() { const w = require('@electron/remote').getCurrentWindow(); w.isMaximized() ? w.unmaximize() : w.maximize() }
 function closeWindow() { saveSession(); require('@electron/remote').getCurrentWindow().close() }
 
-// ── Settings (cog) ────────────────────────────────────────
 function openSettingsMenu(e) {
   if (!currentPlaylist || currentTrackIndex < 0) return
   const track = playlists[currentPlaylist]?.[currentTrackIndex]
@@ -1672,7 +1419,6 @@ function openSettingsMenu(e) {
   openMetadataEditor(track, currentPlaylist, currentTrackIndex)
 }
 
-// ── Import dropdown ───────────────────────────────────────
 let _importDropdownOpen = false
 
 function toggleImportDropdown(e) {
@@ -1699,14 +1445,9 @@ function closeImportDropdown() {
   setTimeout(() => { if (!_importDropdownOpen) dd.style.display = 'none' }, 200)
 }
 
-document.getElementById('importYtItem').addEventListener('click', () => {
-  closeImportDropdown(); openYtImport()
-})
-document.getElementById('importFileItem').addEventListener('click', () => {
-  closeImportDropdown(); openFileImport()
-})
+document.getElementById('importYtItem').addEventListener('click', () => { closeImportDropdown(); openYtImport() })
+document.getElementById('importFileItem').addEventListener('click', () => { closeImportDropdown(); openFileImport() })
 
-// ── From File import ──────────────────────────────────────
 let _fileImportPath = null
 
 function openFileImport() {
@@ -1740,14 +1481,10 @@ async function browseImportFile() {
   const { dialog } = require('@electron/remote')
   const result = await dialog.showOpenDialog({
     properties: ['openFile'],
-    filters: [
-      { name: 'Audio Files', extensions: ['mp3', 'wav', 'flac', 'ogg', 'm4a', 'aac', 'wma'] }
-    ]
+    filters: [{ name: 'Audio Files', extensions: ['mp3', 'wav', 'flac', 'ogg', 'm4a', 'aac', 'wma'] }]
   })
   if (result.canceled || !result.filePaths.length) return
-
   _fileImportPath = result.filePaths[0]
-
   const nameEl = document.getElementById('fileImportName')
   nameEl.textContent = path.basename(_fileImportPath)
   nameEl.classList.add('has-file')
@@ -1759,15 +1496,13 @@ function onFileImportPicked(e) { e.target.value = '' }
 async function confirmFileImport() {
   if (!_fileImportPath) return
   const os = require('os')
-
   const selectedPlaylist = document.getElementById('fileImportPlaylistSelect').value
   let targetDir, targetPlaylistName
 
   if (selectedPlaylist === '__default__') {
     const musicDir = path.join(os.homedir(), 'Music', 'lasts-player-downloads')
     if (!fs.existsSync(musicDir)) fs.mkdirSync(musicDir, { recursive: true })
-    targetDir = musicDir
-    targetPlaylistName = 'lasts-player-downloads'
+    targetDir = musicDir; targetPlaylistName = 'lasts-player-downloads'
   } else {
     const tracks = playlists[selectedPlaylist]
     targetDir = (tracks && tracks.length > 0)
@@ -1785,23 +1520,12 @@ async function confirmFileImport() {
         const ext = path.extname(fileName)
         destPath = path.join(targetDir, `${path.basename(fileName, ext)}_${Date.now()}${ext}`)
       }
-      try {
-        fs.renameSync(_fileImportPath, destPath)
-      } catch (_) {
-        fs.copyFileSync(_fileImportPath, destPath)
-        fs.unlinkSync(_fileImportPath)
-      }
+      try { fs.renameSync(_fileImportPath, destPath) }
+      catch (_) { fs.copyFileSync(_fileImportPath, destPath); fs.unlinkSync(_fileImportPath) }
     }
-  } catch (err) {
-    console.error('File move failed:', err)
-    return
-  }
+  } catch (err) { console.error('File move failed:', err); return }
 
-  const track = {
-    title: path.basename(destPath, path.extname(destPath)),
-    artist: 'Unknown Artist', album: '', genre: '',
-    year: '', duration: 0, coverUrl: null, path: destPath, replayGain: 0
-  }
+  const track = { title: path.basename(destPath, path.extname(destPath)), artist: 'Unknown Artist', album: '', genre: '', year: '', duration: 0, coverUrl: null, path: destPath, replayGain: 0 }
   try {
     const meta = await mm.parseFile(destPath, { duration: true, skipCovers: false })
     const tags = meta.common
@@ -1821,7 +1545,6 @@ async function confirmFileImport() {
   closeFileImport()
 }
 
-// ── YouTube Import ────────────────────────────────────────
 let _ytImporting = false
 
 function openYtImport() {
@@ -1830,8 +1553,7 @@ function openYtImport() {
   for (const name of Object.keys(playlists)) {
     if (name === LIKED_PLAYLIST) continue
     const opt = document.createElement('option')
-    opt.value = name
-    opt.textContent = name
+    opt.value = name; opt.textContent = name
     sel.appendChild(opt)
   }
 
@@ -1841,7 +1563,7 @@ function openYtImport() {
   document.getElementById('ytProgressLabel').textContent = 'Starting…'
   const btn = document.getElementById('ytImportBtn')
   btn.disabled = false
-  btn.textContent = 'Import'
+  btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Import`
 
   const backdrop = document.getElementById('ytImportBackdrop')
   backdrop.style.display = 'flex'
@@ -1868,31 +1590,25 @@ async function startYtImport() {
 
   const os = require('os')
   const { spawn } = require('child_process')
-  const ffmpegPath = require('ffmpeg-static')
-  const ytDlpPath = path.join(
+  const ffmpegPath = unpackedPath(require('ffmpeg-static'))
+  const ytDlpPath = unpackedPath(path.join(
     path.dirname(require.resolve('yt-dlp-exec/package.json')),
     'bin',
     process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp'
-  )
+  ))
 
   const selectedPlaylist = document.getElementById('ytPlaylistSelect').value
-  let targetDir = null
-  let targetPlaylistName = null
+  let targetDir, targetPlaylistName
 
   if (selectedPlaylist === '__default__') {
     const musicDir = path.join(os.homedir(), 'Music', 'lasts-player-downloads')
     if (!fs.existsSync(musicDir)) fs.mkdirSync(musicDir, { recursive: true })
-    targetDir = musicDir
-    targetPlaylistName = null
+    targetDir = musicDir; targetPlaylistName = null
   } else {
     const tracks = playlists[selectedPlaylist]
-    if (tracks && tracks.length > 0) {
-      targetDir = path.dirname(tracks[0].path)
-    } else {
-      const musicDir = path.join(os.homedir(), 'Music', 'lasts-player-downloads')
-      if (!fs.existsSync(musicDir)) fs.mkdirSync(musicDir, { recursive: true })
-      targetDir = musicDir
-    }
+    targetDir = (tracks && tracks.length > 0)
+      ? path.dirname(tracks[0].path)
+      : (() => { const d = path.join(os.homedir(), 'Music', 'lasts-player-downloads'); if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); return d })()
     targetPlaylistName = selectedPlaylist
   }
 
@@ -1934,10 +1650,7 @@ async function startYtImport() {
       proc.stderr.on('data', d => {
         stderrBuf += d.toString()
         const m = stderrBuf.match(/\[download\]\s+([\d.]+)%/)
-        if (m) {
-          const pct = Math.min(85, 15 + parseFloat(m[1]) * 0.7)
-          ytSetProgress(pct, `Downloading… ${m[1]}%`)
-        }
+        if (m) ytSetProgress(Math.min(85, 15 + parseFloat(m[1]) * 0.7), `Downloading… ${m[1]}%`)
       })
       proc.on('close', code => {
         if (code === 0) resolve()
@@ -1966,14 +1679,12 @@ async function startYtImport() {
           if (res.statusCode === 301 || res.statusCode === 302) {
             file.close()
             const redir = (res.headers.location.startsWith('https') ? require('https') : require('http')).get(res.headers.location, r2 => {
-              r2.pipe(file)
-              file.on('finish', () => { file.close(); resolve() })
+              r2.pipe(file); file.on('finish', () => { file.close(); resolve() })
             })
             redir.on('error', () => { thumbTmp = null; resolve() })
             return
           }
-          res.pipe(file)
-          file.on('finish', () => { file.close(); resolve() })
+          res.pipe(file); file.on('finish', () => { file.close(); resolve() })
         })
         request.on('error', () => { thumbTmp = null; resolve() })
       })
@@ -1982,22 +1693,11 @@ async function startYtImport() {
     const taggedMp3 = actualMp3.replace('.mp3', '_tagged.mp3')
     const ffArgs = ['-y', '-i', actualMp3]
     if (thumbTmp && fs.existsSync(thumbTmp)) {
-      ffArgs.push(
-        '-i', thumbTmp, '-map', '0:a', '-map', '1:v',
-        '-c:a', 'copy', '-c:v', 'mjpeg',
-        '-id3v2_version', '3', '-write_id3v1', '1',
-        '-metadata:s:v', 'title=Album cover',
-        '-metadata:s:v', 'comment=Cover (front)'
-      )
+      ffArgs.push('-i', thumbTmp, '-map', '0:a', '-map', '1:v', '-c:a', 'copy', '-c:v', 'mjpeg', '-id3v2_version', '3', '-write_id3v1', '1', '-metadata:s:v', 'title=Album cover', '-metadata:s:v', 'comment=Cover (front)')
     } else {
       ffArgs.push('-map', '0', '-c', 'copy', '-id3v2_version', '3')
     }
-    ffArgs.push(
-      '-metadata', `title=${videoTitle}`,
-      '-metadata', `artist=${channel}`,
-      '-metadata', `date=${year}`,
-      taggedMp3
-    )
+    ffArgs.push('-metadata', `title=${videoTitle}`, '-metadata', `artist=${channel}`, '-metadata', `date=${year}`, taggedMp3)
 
     await new Promise((resolve, reject) => {
       const proc = spawn(ffmpegPath, ffArgs)
@@ -2017,8 +1717,7 @@ async function startYtImport() {
 
     ytSetProgress(95, 'Adding to library…')
 
-    let coverUrl = null
-    let duration = 0
+    let coverUrl = null, duration = 0
     try {
       const meta = await mm.parseFile(actualMp3, { duration: true, skipCovers: false })
       duration = meta.format.duration || 0
@@ -2026,10 +1725,7 @@ async function startYtImport() {
       if (pic) { const blob = new Blob([pic.data], { type: pic.format }); coverUrl = URL.createObjectURL(blob) }
     } catch (_) {}
 
-    const newTrack = {
-      title: videoTitle, artist: channel, album: '', genre: '',
-      year, duration, path: actualMp3, coverUrl, replayGain: 0
-    }
+    const newTrack = { title: videoTitle, artist: channel, album: '', genre: '', year, duration, path: actualMp3, coverUrl, replayGain: 0 }
 
     if (targetPlaylistName && playlists[targetPlaylistName]) {
       playlists[targetPlaylistName].push(newTrack)
@@ -2040,10 +1736,7 @@ async function startYtImport() {
       targetPlaylistName = pname
     }
 
-    savePlaylists()
-    renderPlaylists()
-    loadPlaylist(targetPlaylistName)
-
+    savePlaylists(); renderPlaylists(); loadPlaylist(targetPlaylistName)
     ytSetProgress(100, '✓ Import complete!')
     _ytImporting = false
     setTimeout(() => { closeYtImport() }, 1200)
@@ -2057,64 +1750,40 @@ async function startYtImport() {
   }
 }
 
-// ── Media Session API (Windows SMTC / hardware media keys) ───────────────
 function updateMediaSession(track) {
   if (!('mediaSession' in navigator)) return
   navigator.mediaSession.metadata = new MediaMetadata({
     title:  track.title  || 'Unknown',
     artist: track.artist || 'Unknown Artist',
     album:  track.album  || '',
-    artwork: track.coverUrl
-      ? [{ src: track.coverUrl, sizes: '512x512', type: 'image/jpeg' }]
-      : []
+    artwork: track.coverUrl ? [{ src: track.coverUrl, sizes: '512x512', type: 'image/jpeg' }] : []
   })
 }
 
 function setupMediaSession() {
   if (!('mediaSession' in navigator)) return
-
   navigator.mediaSession.setActionHandler('play', () => {
-    if (currentSound && !currentSound.playing()) {
-      currentSound.play()
-    } else if (!currentSound) {
+    if (currentSound && !currentSound.playing()) currentSound.play()
+    else if (!currentSound) {
       const target = currentPlaylist || viewedPlaylist
-      if (target && playlists[target]?.length > 0) {
-        playSong(currentTrackIndex >= 0 ? currentTrackIndex : 0, target)
-      }
+      if (target && playlists[target]?.length > 0) playSong(currentTrackIndex >= 0 ? currentTrackIndex : 0, target)
     }
   })
-
-  navigator.mediaSession.setActionHandler('pause', () => {
-    if (currentSound && currentSound.playing()) currentSound.pause()
-  })
-
-  navigator.mediaSession.setActionHandler('stop', () => {
-    stopPlayback()
-  })
-
-  navigator.mediaSession.setActionHandler('nexttrack', () => {
-    nextSong()
-  })
-
-  navigator.mediaSession.setActionHandler('previoustrack', () => {
-    prevSong()
-  })
-
+  navigator.mediaSession.setActionHandler('pause', () => { if (currentSound && currentSound.playing()) currentSound.pause() })
+  navigator.mediaSession.setActionHandler('stop', () => stopPlayback())
+  navigator.mediaSession.setActionHandler('nexttrack', () => nextSong())
+  navigator.mediaSession.setActionHandler('previoustrack', () => prevSong())
   navigator.mediaSession.setActionHandler('seekto', (details) => {
-    if (currentSound && typeof details.seekTime === 'number') {
-      currentSound.seek(details.seekTime)
-    }
+    if (currentSound && typeof details.seekTime === 'number') currentSound.seek(details.seekTime)
   })
 }
 
 setupMediaSession()
 
-// ── Thumbar button IPC listeners ──────────────────────────────────────────
 const { ipcRenderer } = require('electron')
 ipcRenderer.on('media-play',  () => { if (!isPlaying) togglePlay() })
 ipcRenderer.on('media-pause', () => { if (isPlaying)  togglePlay() })
 ipcRenderer.on('media-next',  () => nextSong())
 ipcRenderer.on('media-prev',  () => prevSong())
 
-// ── Init ──────────────────────────────────────────────────
 loadPlaylists()
