@@ -27,6 +27,34 @@
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* Prevent selection and dragging */
+/* ── Prevent selection & drag (native app feel) ─────────── */
+*, *::before, *::after {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* Re-enable selection only where it's needed */
+input, textarea {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+img {
+  -webkit-user-drag: none;
+  pointer-events: none; /* prevents drag ghost */
+}
+
+/* Restore pointer-events for interactive images (cover art clicks etc.) */
+.cover-art img,
+.pl-thumb img,
+.t-mini-art img,
+.meta-cover-preview img,
+.modal-cover-preview img {
+  pointer-events: auto;
+}
+
 html, body {
   width: 100%; height: 100%; overflow: hidden;
   background: var(--bg);

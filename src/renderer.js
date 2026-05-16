@@ -348,6 +348,9 @@ function animateSongSwitch(track) {
   songInfo.classList.add('spring-in')
   setTimeout(() => songInfo.classList.remove('spring-in'), 700)
 
+  /* Update app title */
+  require('electron').ipcRenderer.send('set-title', track.title ? `${track.title} — last's player` : "last's player")
+
   const progressSection = document.querySelector('.progress-section')
   progressSection.classList.remove('spring-in')
   void progressSection.offsetWidth
@@ -982,7 +985,15 @@ function togglePlay() {
 
 function updatePlayBtn() {
   if ('mediaSession' in navigator) navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused'
-  require('electron').ipcRenderer.send('update-play-state', isPlaying)
+
+  const _currentTrack = currentPlaylist && currentTrackIndex >= 0 
+  ? playlists[currentPlaylist]?.[currentTrackIndex] 
+  : null
+  require('electron').ipcRenderer.send('update-play-state', { 
+    isPlaying, 
+    title: _currentTrack?.title || null 
+  })
+
   const icon = document.getElementById('playIcon')
   icon.innerHTML = isPlaying
     ? '<rect x="6" y="4" width="4" height="16" rx="1.5"/><rect x="14" y="4" width="4" height="16" rx="1.5"/>'
@@ -1031,6 +1042,9 @@ function stopPlayback() {
   isPlaying = false; updatePlayBtn(); clearInterval(progressInterval)
   document.getElementById('progressFill').style.width = '0%'
   document.getElementById('currentTime').textContent = '0:00'
+
+  /* Reset app name */
+  require('electron').ipcRenderer.send('set-title', "last's player")
 }
 
 function toggleShuffle() {

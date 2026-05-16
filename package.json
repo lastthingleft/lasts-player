@@ -1,6 +1,6 @@
 {
   "name": "lasts-player",
-  "version": "1.9.0",
+  "version": "2.0.0",
   "description": "Dark music player",
   "main": "./src/main.js",
   "type": "commonjs",

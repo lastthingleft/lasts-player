@@ -3,6 +3,8 @@ const path = require('path')
 const fs = require('fs')
 require('@electron/remote/main').initialize()
 
+app.setAppUserModelId("lasts.player")
+
 let win
 
 function setThumbbar(playing) {
@@ -19,7 +21,6 @@ function setThumbbar(playing) {
 
 function createWindow() {
   app.setName("last's player")
-  app.setAppUserModelId("lasts.player")
 
   win = new BrowserWindow({
     width: 1100,
@@ -42,7 +43,15 @@ function createWindow() {
   win.webContents.on('did-finish-load', () => setThumbbar(false))
 }
 
-ipcMain.on('update-play-state', (_e, playing) => setThumbbar(playing))
+ipcMain.on('update-play-state', (_e, { isPlaying, title }) => {
+  setThumbbar(isPlaying)
+  const win = BrowserWindow.getAllWindows()[0]
+  if (win) win.setTitle(title ? `${title} — last's player` : "last's player")
+})
+
+ipcMain.on('set-title', (event, title) => {
+  BrowserWindow.getFocusedWindow()?.setTitle(title)
+})
 
 app.whenReady().then(createWindow)
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
